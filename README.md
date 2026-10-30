@@ -1,3 +1,15 @@
+# 接口回归选择器（API Regression Selector）
+
+> 🍴 **本仓库派生自 [`lefan17/fullstack-test-framework`](https://github.com/lefan17/fullstack-test-framework)**
+> （本地 fork 起点 `dfc9fe6`，2026-10-31）。派生目的：**在完全冻结原仓库的前提下**，
+> 新增「变更 → 测试选择（TIA, Test Impact Analysis）」能力与 AI 编码 Agent 协作规范。
+> 原仓库一字未改，两仓独立演进。
+>
+> 下方 badge 与 GitHub Pages 链接**仍指向原仓库**的真实 CI 与报表——新仓库尚未建立
+> 自己的流水线，指向新地址会 404。建立后应替换。
+
+---
+
 # 接口 + UI + 业务全链路自动化测试框架
 
 [![Auto Test](https://github.com/lefan17/fullstack-test-framework/actions/workflows/test.yml/badge.svg)](https://github.com/lefan17/fullstack-test-framework/actions/workflows/test.yml)

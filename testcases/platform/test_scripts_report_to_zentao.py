@@ -182,7 +182,7 @@ def test_dry_run_artifact_is_parseable_and_carries_no_credentials(
     assert network_spy == []
     raw = inputs["out"].read_text(encoding="utf-8")
     artifact = json.loads(raw)
-    assert artifact["schema"] == "fullstack-test-framework/zentao-payload@1"
+    assert artifact["schema"] == "api-regression-selector/zentao-payload@1"
     assert artifact["dry_run"] is True
     assert artifact["requests"], "--out 写出了空 requests：dry-run 的产物没有任何信息量"
     first = artifact["requests"][0]

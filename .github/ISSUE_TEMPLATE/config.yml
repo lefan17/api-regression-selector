@@ -7,13 +7,13 @@ blank_issues_enabled: false
 # 没有它们，所有问题都会变成 issue，然后真问题会被淹掉。
 contact_links:
   - name: 先读贡献指南
-    url: https://github.com/lefan17/fullstack-test-framework/blob/main/CONTRIBUTING.md
+    url: https://github.com/lefan17/api-regression-selector/blob/main/CONTRIBUTING.md
     about: 环境搭建、跑测试的命令、以及这个仓库里几条不照做就会出问题的约定。
 
   - name: 这是被测服务"故意保留的缺陷"，不是 bug
-    url: https://github.com/lefan17/fullstack-test-framework/blob/main/docs/login-contract.md
+    url: https://github.com/lefan17/api-regression-selector/blob/main/docs/login-contract.md
     about: login_app/ 故意带 6 个缺陷（FIND-01~06），契约用例钉住的就是"当前行为"。先看差异表。
 
   - name: 想知道哪些数字是实测的、哪些没验证过
-    url: https://github.com/lefan17/fullstack-test-framework/blob/main/README.md
+    url: https://github.com/lefan17/api-regression-selector/blob/main/README.md
     about: README 的"当前实测结果"一节给出了命令与原始输出，以及明确标注"未验证"的项。

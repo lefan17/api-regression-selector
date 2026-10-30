@@ -318,7 +318,7 @@ def _describe(outcome: Outcome, reruns: int) -> str:
 
     重跑必须写在这里：禅道的 ``result`` 只有四个枚举值，多塞一维就是伪造。
     """
-    bits = [f"fullstack-test-framework 自动上报：{outcome.outcome}"]
+    bits = [f"api-regression-selector 自动上报：{outcome.outcome}"]
     if reruns:
         bits.append(f"重跑 {reruns} 次（JUnit XML 不表达 rerun，此数取自 reports/flaky-governance.json）")
     bits.append(f"nodeid={outcome.nodeid}")
@@ -412,7 +412,7 @@ def _run(argv: list[str] | None = None) -> int:
 
     if args.out is not None:
         artifact = {
-            "schema": "fullstack-test-framework/zentao-payload@1",
+            "schema": "api-regression-selector/zentao-payload@1",
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "dry_run": not args.send,
             "zentao_base_url": base_url,

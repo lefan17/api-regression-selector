@@ -412,7 +412,7 @@ def build_index(testcases_dir: Path, collected: dict[tuple[str, str], list[str]]
     ]
 
     return {
-        "schema": "fullstack-test-framework/case-index@1",
+        "schema": "api-regression-selector/case-index@1",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "mode": "static-only" if static_only else "collect",
         "testcases_dir": testcases_dir.relative_to(REPO_ROOT).as_posix()

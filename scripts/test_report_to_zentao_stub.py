@@ -179,7 +179,7 @@ def write_inputs(tmp_path: Path, *, map_lc06: bool = True) -> Inputs:
     case_index.write_text(
         json.dumps(
             {
-                "schema": "fullstack-test-framework/case-index@1",
+                "schema": "api-regression-selector/case-index@1",
                 "cases": [
                     {"case_id": "LC-01", "nodeid": NODEID_OK, "suite": "login"},
                     {"case_id": "LC-06", "nodeid": NODEID_FAIL, "suite": "login"},

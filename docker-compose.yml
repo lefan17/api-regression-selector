@@ -17,14 +17,14 @@
 # 这份文件只做过静态校验（docker compose config --quiet），**没有真实构建和运行过**。
 # 构建结果需在 daemon 可用的机器上验证。
 
-name: fullstack-test-framework
+name: api-regression-selector
 
 services:
   # 被测服务一：MES Mock 后端（工单状态机 / 库存 / 幂等 / 并发）
   mock-server:
     build:
       context: .
-    image: fullstack-test-framework:local
+    image: api-regression-selector:local
     command:
       - python
       - -m
@@ -59,7 +59,7 @@ services:
   login-app:
     build:
       context: .
-    image: fullstack-test-framework:local
+    image: api-regression-selector:local
     command:
       - python
       - -m
@@ -88,7 +88,7 @@ services:
     profiles: ["test"]
     build:
       context: .
-    image: fullstack-test-framework:local
+    image: api-regression-selector:local
     depends_on:
       mock-server:
         condition: service_healthy

@@ -27,7 +27,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fullstack-test-framework"
+name = "api-regression-selector"
 version = "0.1.0"
 description = "接口 + UI + 业务全链路自动化测试框架（pytest / requests / Playwright / Allure）"
 readme = "README.md"

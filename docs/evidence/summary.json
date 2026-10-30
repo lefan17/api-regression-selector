@@ -1,6 +1,6 @@
 {
   "schema": "evidence-summary@1",
-  "repo": "fullstack-test-framework",
+  "repo": "api-regression-selector",
   "collected_at": "2026-10-25T14:46:28+08:00",
   "source": "reports/case-index.json（qaplat 用例索引，由 CI/本地 `qaplat registry build` 生成）",
   "produced_at": "2026-10-25T06:46:07+00:00",
