@@ -81,12 +81,12 @@ $VENV -m pytest --basetemp=$TMP/pytest
 
 | 项 | 上游 `fullstack-test-framework` | 本仓 |
 |---|---|---|
-| 用例数 | 636 collected | 636（同步起点） |
+| 用例数 | 636 collected | **697 collected**（+61 条 TIA 用例） |
 | 冒烟 | 30 passed | 30 passed（实测 11.84s） |
 | venv | 自带 330M | **复用上游** |
 | 包名 | `fullstack-test-framework` | `api-regression-selector` |
 | zentao schema | `fullstack-test-framework/zentao-payload@1` | `api-regression-selector/zentao-payload@1` |
-| 新增能力 | — | TIA（`qaplat/tia.py`，规划中） |
+| 新增能力 | — | **TIA（`qaplat/tia.py`，已实现并验收）** |
 
 改名已同步到 8 处：`pyproject.toml`、`docker-compose.yml`、
 `.github/ISSUE_TEMPLATE/config.yml`、`scripts/case_index.py`、

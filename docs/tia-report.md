@@ -5,20 +5,22 @@
 
 ## 一句话
 
-把「这次改动会影响哪些用例」算出来，只跑那一批。实测：**改 `mock_server/routers.py` 一行 → 选中 1 条用例（1/689，0.15%），跑完 2.21 秒**；而全量 `-m "not ui"` 是 **196.55 秒**。
+把「这次改动会影响哪些用例」算出来，只跑那一批。实测：**改 `mock_server/routers.py` 一行 → 选中 1 条用例（1/697，0.15%），跑完 2.21 秒**；而全量 `-m "not ui"` 是 **196.55 秒**。
 
 ## 交付物
 
 | 文件 | 行数 | 作用 |
 |---|---|---|
-| `qaplat/tia.py` | 893 / 766 行代码 | 选择器核心：v1 文件级 + v2 行级（coverage-context）+ 索引新鲜度 |
-| `qaplat/cli.py` | +199/−1 | `tia select` / `tia capture` 子命令；`gate --select tia`（默认关闭） |
-| `qaplat/_dump.py` | +11 | 采集插件加 `trylast=True`，修正分层分母与跨层选中 |
-| `testcases/platform/test_tia.py` | 900 / 61 条 | 覆盖 v1/v2 共 16 个分支 + 索引新鲜度 8 条，`qaplat/tia.py` 行覆盖 90% |
-| `.github/workflows/tia.yml` | 96 | 仅 `workflow_dispatch`：采集 → capture → 选择，不进 PR 门 |
-| `docs/tia-plan.md` | 210 | 契约基准：接口、CLI、验收数字、不做什么 |
-| `docs/TIA完全入门.md` | 2057 | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
-| `docs/tia-review.md` | 214 | 独立核验记录：5 条判据判决、13 项问题处理、核验方明确没验的部分 |
+| `qaplat/tia.py` | **858** | 选择器核心：v1 文件级 + v2 行级（coverage-context）+ 索引新鲜度 |
+| `qaplat/cli.py` | **+215/−1**（文件 683 行） | `tia select` / `tia capture` 子命令；`gate --select tia`（默认关闭） |
+| `qaplat/_dump.py` | **+11**（文件 168 行） | 采集插件加 `trylast=True`，修正分层分母与跨层选中 |
+| `testcases/platform/test_tia.py` | **855 行 / 61 条** | 覆盖 v1/v2 共 16 个分支 + 索引新鲜度 8 条，`qaplat/tia.py` 行覆盖 90% |
+| `.github/workflows/tia.yml` | **92** | 仅 `workflow_dispatch`：采集 → capture → 选择，不进 PR 门 |
+| `docs/tia-plan.md` | **213** | 契约基准：接口、CLI、验收数字、不做什么 |
+| `docs/TIA完全入门.md` | **2141** | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
+| `docs/tia-review.md` | **154** | 独立核验记录：两轮 5 条判据判决、问题处理表、核验方明确没验的部分 |
+
+> 行数是 `wc -l` 实测值。改代码后请重测再回填——手写行数正是这份表上一轮 6 行全错的来源。
 
 ## 核心数字
 
@@ -31,7 +33,7 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 ```
 
 > **这是首采（`test_tia.py` 还不存在时）的口径。** 当前工作区实测是
-> `3 failed, 641 passed, 34 deselected, 11 xfailed in 139.17s`、收集 **689**（636 + 53 条
+> `3 failed, 640 passed, 1 skipped, 34 deselected, 11 xfailed in 190.00s`、收集 **697**（636 + 53 条
 > 平台自测）。两套数字都对，但**分母不同不能互相换算**：引用「省了多少」时，分子分母要
 > 取自同一次运行。
 
@@ -81,11 +83,11 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 
 | `pytest_args` | 对应入口 | 修前 | 修后 |
 |---|---|---|---|
-| `[]` | `tia select` 独立预览 | 689 | **689** |
-| `['-m','smoke']` | `--layer smoke` | 689（错） | **36** |
-| `['-m','api']` | `--layer api` | 689（错） | **132** |
+| `[]` | `tia select` 独立预览 | 697 | **697** |
+| `['-m','smoke']` | `--layer smoke` | 697（错） | **36** |
+| `['-m','api']` | `--layer api` | 697（错） | **132** |
 
-两个交叉印证：`36` 与 pytest 自报的 `36/689 tests collected (653 deselected)` 一致；`132` 与仓库 `AGENTS.md` 记载的「接口层 132 条」一致。
+两个交叉印证：`36` 与 pytest 自报的 `36/697 tests collected (661 deselected)` 一致；`132` 与仓库 `AGENTS.md` 记载的「接口层 132 条」一致。
 
 ## 怎么用
 
@@ -100,7 +102,7 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 
 这是**建索引**，不是跑测试——它顺带把结果跑一遍，产出 `.tia-coverage`。
 
-采完**立刻**记一次 HEAD，否则后面判断不了新颖度：
+采完**立刻**记一次 HEAD，否则后面判断不了新鲜度：
 
 ```bash
 "$VENV" -m qaplat.cli tia capture --coverage-data .tia-coverage
@@ -192,8 +194,8 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 | 项 | 结果 |
 |---|---|
 | `testcases/platform/test_tia.py` | **61 passed**（含索引新鲜度 8 条） |
-| `-m platform` | 3 failed（基线）, 286 passed, 400 deselected |
-| `qaplat/tia.py` 行覆盖 | 90%（267 stmts / 27 miss；未覆盖的主要是 `_run_git` 的真 git 调用、CLI 接线，以及 `select` / `select_by_lines` 里「未命中任何用例 → 全量」的两条算法兜底分支，`qaplat/tia.py:553` 与 `:671`） |
+| `-m platform` | 3 failed（基线）, 294 passed, 400 deselected |
+| `qaplat/tia.py` 行覆盖 | 90%（267 stmts / 27 miss；未覆盖的主要是 `_run_git` 的真 git 调用、CLI 接线，以及 `select` / `select_by_lines` 里「未命中任何用例 → 全量」的两条算法兜底分支，`qaplat/tia.py:554` 与 `:671`） |
 | `ruff check` / `format --check` | 通过（163 files formatted） |
 | 全仓 `mypy` | 122 文件 0 issue |
 | 上游仓零改动 | `dfc9fe6` dirty 0 |

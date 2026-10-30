@@ -58,7 +58,7 @@
 
 ### 0.2 一次 `qaplat tia select` 的完整生命周期
 
-命令入口在 `qaplat/cli.py:240`（`cmd_tia_select`）。本仓 `qaplat` 包**没有 `__main__.py`**，所以正确的入口是 `python -m qaplat.cli`；写成 `python -m qaplat` 会得到 `No module named qaplat.__main__`。下文所有命令示例都用前者。
+命令入口在 `qaplat/cli.py:261`（`cmd_tia_select`）。本仓 `qaplat` 包**没有 `__main__.py`**，所以正确的入口是 `python -m qaplat.cli`；写成 `python -m qaplat` 会得到 `No module named qaplat.__main__`。下文所有命令示例都用前者。
 
 从你按下回车的瞬间到屏幕上出现那段文本，一共经过下面这些步骤。每一步都标了「哪个文件、哪一行、读什么、写什么」：
 
@@ -77,26 +77,26 @@
    │     把 "--pytest-args '-m smoke'" 这一整串用 shlex 切成 argv
    │     ↓
    ├─④ tia.select_from_git(base, pytest_args, include_worktree, data_path)
-   │                                                  qaplat/tia.py:685
+   │                                                  qaplat/tia.py:686
    │     ↓（这是唯一把几种 IO 串起来的函数）
    ├─⑤ registry.collect_cases(pytest_args)             qaplat/registry.py:202
    │     起一个 pytest 子进程：pytest --collect-only -q -q --no-header -p qaplat._dump
    │     产出 list[CaseInfo]：nodeid + markers + referenced_paths + covers
    │     ↓
-   ├─⑥ tia.changed_hunks(base, include_worktree, cwd)  qaplat/tia.py:333
-   │     ├─ changed_files(...)                         qaplat/tia.py:297
+   ├─⑥ tia.changed_hunks(base, include_worktree, cwd)  qaplat/tia.py:334
+   │     ├─ changed_files(...)                         qaplat/tia.py:298
    │     │    三条 git 命令：diff --name-only base...HEAD / diff --name-only HEAD / ls-files --others
    │     └─ 逐文件 git diff -U0 → _new_lines_from_diff → ChangedHunk(path, lines)
    │     ↓
-   ├─⑦ tia.load_context_index(data_path, root)         qaplat/tia.py:386
+   ├─⑦ tia.load_context_index(data_path, root)         qaplat/tia.py:387
    │     coverage.CoverageData 读 SQLite
    │     → {仓库相对路径: {行号: (nodeid, ...)}}
    │     ↓
-   ├─⑧ tia.select_by_lines(hunks, index, cases)        qaplat/tia.py:566
+   ├─⑧ tia.select_by_lines(hunks, index, cases)        qaplat/tia.py:567
    │     纯函数：不读盘、不起子进程、不调 git
    │     → Selection(node_ids, full, reason, strategy, ...)
    │     ↓
-   ├─⑨ tia.render_json(sel) 或 tia.render_text(sel)     qaplat/tia.py:747 / 715
+   ├─⑨ tia.render_json(sel) 或 tia.render_text(sel)     qaplat/tia.py:748 / 715
    │     ↓
    └─⑩ 打印结果，退出码 0（选择器自身失败才是 2）
 ```
@@ -146,13 +146,13 @@ python -m qaplat.cli gate --layer pr --select tia
                   ├─ context 1807 行：nodeid|run / nodeid|setup / nodeid|teardown / 空串
                   └─ line_bits       ：每个文件每行的执行位图（按 context 分组）
                             │
-                            │  load_context_index()            qaplat/tia.py:386
+                            │  load_context_index()            qaplat/tia.py:387
                             ▼
                   dict[仓库相对路径 -> dict[行号 -> (nodeid, ...)]]
                             │
    git diff -U0  ───────────┤
-   changed_hunks()          │  select_by_lines()              qaplat/tia.py:566
-   qaplat/tia.py:333        ▼
+   changed_hunks()          │  select_by_lines()              qaplat/tia.py:567
+   qaplat/tia.py:334        ▼
                   Selection(node_ids, full, reason, strategy)
                             │
               ┌─────────────┴─────────────┐
@@ -176,7 +176,7 @@ python -m qaplat.cli gate --layer pr --select tia
 - **下界**：`changed_files` / `changed_hunks` / `collect_cases` 三个函数是它唯一允许碰的外部世界；
 - **中间**：`select` / `select_by_lines` 是两个纯函数，判断逻辑全在这里。
 
-读代码时建议按这个顺序：先看常量区（`qaplat/tia.py:50-98`）搞清「哪些文件一改就全量」；再看 `changed_files`（`qaplat/tia.py:297`）和 `changed_hunks`（`qaplat/tia.py:333`）搞清「变更行怎么来」；然后看 `select`（v1，`qaplat/tia.py:461`）——**它虽然已经不是默认路径，但它是理解「为什么会失败」的最好教材**；最后看 `load_context_index`（`qaplat/tia.py:386`）和 `select_by_lines`（`qaplat/tia.py:566`）。
+读代码时建议按这个顺序：先看常量区（`qaplat/tia.py:51-98`）搞清「哪些文件一改就全量」；再看 `changed_files`（`qaplat/tia.py:298`）和 `changed_hunks`（`qaplat/tia.py:334`）搞清「变更行怎么来」；然后看 `select`（v1，`qaplat/tia.py:466`）——**它虽然已经不是默认路径，但它是理解「为什么会失败」的最好教材**；最后看 `load_context_index`（`qaplat/tia.py:387`）和 `select_by_lines`（`qaplat/tia.py:567`）。
 
 ---
 
@@ -298,10 +298,10 @@ testcases/login/test_login_contract.py::test_lc01_login_success|run
 
 **为什么空串危险**：模块导入期的代码（`import`、常量、装饰器、函数定义本身）不属于任何用例。如果把它当成「没有任何用例执行过」，那么「改了 import 行」会被判成「影响 0 条用例」——这恰好是最需要全量的情况。所以索引里用一个空串哨兵把它标出来，交给 `select_by_lines` 判全量（第 4 章）。
 
-**为什么不能无条件按 `|` 切**：参数化 id 里可能自带竖线，例如 `test_x[a|b]`。`context.split("|")[0]` 会把 id 切成 `test_x[a`，永远匹配不上任何 `CaseInfo`。实现里只在**后缀确实属于 `{run, setup, teardown}`** 时才切（`qaplat/tia.py:369` 的 `_context_node_id`）：
+**为什么不能无条件按 `|` 切**：参数化 id 里可能自带竖线，例如 `test_x[a|b]`。`context.split("|")[0]` 会把 id 切成 `test_x[a`，永远匹配不上任何 `CaseInfo`。实现里只在**后缀确实属于 `{run, setup, teardown}`** 时才切（`qaplat/tia.py:370` 的 `_context_node_id`）：
 
 ```python
-# qaplat/tia.py:369
+# qaplat/tia.py:370
 def _context_node_id(context: str) -> str | None:
     if not context.strip():
         return _MODULE_LEVEL  # 空串 → 模块级哨兵，不是 None：必须留下痕迹
@@ -347,7 +347,7 @@ coverage_schema   meta   file   context   line_bits   arc   tracer
 | `line_bits` | 多行 | 「某个文件的某段行号 → 某个 context 的执行位图」 |
 | `arc` | 空 | 分支覆盖率数据；本仓没开 `--cov-branch`，所以是空的 |
 
-`coverage.CoverageData.contexts_by_lineno(file)` 做的事情，就是把 `line_bits` 和 `context` 两张表 join 起来，还原成「这个文件的第 123 行，被哪些 context 执行过」。`load_context_index`（`qaplat/tia.py:386`）在此基础上再做一层：把 context 还原成 nodeid、把绝对路径还原成仓库相对路径。
+`coverage.CoverageData.contexts_by_lineno(file)` 做的事情，就是把 `line_bits` 和 `context` 两张表 join 起来，还原成「这个文件的第 123 行，被哪些 context 执行过」。`load_context_index`（`qaplat/tia.py:387`）在此基础上再做一层：把 context 还原成 nodeid、把绝对路径还原成仓库相对路径。
 
 **一个数字上的巧合，值得记一下**：1807 = 602 × 3 + 1。
 
@@ -369,7 +369,7 @@ COVERAGE_FILE=.tia-coverage \
 
 为什么写 `COVERAGE_FILE=.tia-coverage` 而不是默认的 `.coverage`：
 
-- `qaplat/cli.py:175` 的 `_resolve_coverage_data` 优先找 `.tia-coverage`，再找 `.coverage`；
+- `qaplat/cli.py:176` 的 `_resolve_coverage_data` 优先找 `.tia-coverage`，再找 `.coverage`；
 - 用独立文件名，不会把「平时看报告用的那份覆盖率」覆盖掉；
 - `.coverage` / `.coverage.*` 已经在 `.gitignore` 里，不会被误提交。
 
@@ -422,10 +422,10 @@ parallel = true
 
 ### 3.2 三条 `--name-only` 各自回答什么
 
-`changed_files`（`qaplat/tia.py:297`）固定执行三条命令，缺一条都会漏掉某一类改动：
+`changed_files`（`qaplat/tia.py:298`）固定执行三条命令，缺一条都会漏掉某一类改动：
 
 ```python
-# qaplat/tia.py:297（节选）
+# qaplat/tia.py:298（节选）
 found.update(line.strip() for line in _run_git(["diff", "--name-only", f"{base}...HEAD"], workdir).splitlines())
 if include_worktree:
     found.update(line.strip() for line in _run_git(["diff", "--name-only", "HEAD"], workdir).splitlines())
@@ -441,7 +441,7 @@ return tuple(sorted(found))  # 稳定排序：同一份 diff 永远产出同一�
 | `diff --name-only HEAD` | 「工作区里还有哪些没提交的改动」 | 本地调试时最常见的场景失效 |
 | `ls-files --others` | 「新增了哪些还没 add 的文件」 | 新建的测试文件/源码不会被选中 |
 
-三点 `...` 而不是两点 `..`（`qaplat/tia.py:297` 的 docstring）：
+三点 `...` 而不是两点 `..`（`qaplat/tia.py:298` 的 docstring）：
 
 > 用**三点** `...` 而不是两点 `..`：PR 门禁关心的是「本分支相对 merge-base 改了什么」；`..` 会把 base 分支自己走远的那部分也算进来，变更集于是随 base 的推进而抖动。
 
@@ -457,20 +457,20 @@ return tuple(sorted(found))  # 稳定排序：同一份 diff 永远产出同一�
 
 意思是：旧文件从第 12 行起 3 行，被替换成新文件从第 12 行起 4 行。`-U0` 表示**不要上下文**——默认的 `-U3` 会把改动行前后各 3 行也打印出来，那些行**没有变**，但会被笨解析器当成变更行。
 
-为什么必须 `-U0`（`qaplat/tia.py:333` 的 docstring）：
+为什么必须 `-U0`（`qaplat/tia.py:334` 的 docstring）：
 
 > 为什么必须 `-U0`：默认 3 行上下文会把「没改的行」也算成变更行，命中面被无谓放大，行级精度直接退化；行级策略要的恰恰是**真正新增/修改的那几行**。
 
 ### 3.4 解析：`_new_lines_from_diff`
 
-`qaplat/tia.py:261` 的正则和取数逻辑：
+`qaplat/tia.py:262` 的正则和取数逻辑：
 
 ```python
-# qaplat/tia.py:88
+# qaplat/tia.py:89
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 
 
-# qaplat/tia.py:261
+# qaplat/tia.py:262
 def _new_lines_from_diff(patch: str) -> set[int]:
     lines: set[int] = set()
     for match in _HUNK_RE.finditer(patch):
@@ -499,13 +499,13 @@ def _new_lines_from_diff(patch: str) -> set[int]:
 - `a.txt` 的 `(2, 4)` 正好是「改掉的第 2 行」与「新增的第 4 行」；
 - `b.txt` 的 `lines=()` 是**空元组**，不是「没变化」——它是未跟踪文件，`git diff HEAD` 对它返回空，所以拿不到目标行。`select_by_lines` 会把空元组判成「影响面未知 → 全量」。
 
-`lines=()` 的四种来源（`qaplat/tia.py:102` 的 `ChangedHunk` docstring）：
+`lines=()` 的四种来源（`qaplat/tia.py:103` 的 `ChangedHunk` docstring）：
 
 > 纯删除、二进制、纯重命名、未跟踪文件都落在这里。行级策略必须把它当成「影响面未知」全量兜底——没有目标行不等于没有影响。
 
 ### 3.5 为什么逐文件再跑一次 `git diff`
 
-`changed_hunks`（`qaplat/tia.py:333`）不是解析一次全量 diff，而是对每个变更文件单独跑 `git diff -U0 -- <raw>`。理由写在 docstring 里：
+`changed_hunks`（`qaplat/tia.py:334`）不是解析一次全量 diff，而是对每个变更文件单独跑 `git diff -U0 -- <raw>`。理由写在 docstring 里：
 
 > 为什么逐文件再调一次 `git diff`，而不是解析全量 diff 的 `+++ b/...` 头：路径里带空格、非 ASCII 或引号时 git 会做 C 风格转义，解析头部要写一套反转义且容易错；这层多起几个子进程是毫秒级成本，换来的是「路径永远来自 `--name-only`，与 `changed_files` 逐字一致」。
 
@@ -519,7 +519,7 @@ diff --git a/路径 带空格.txt b/路径 带空格.txt
 
 ### 3.6 git 失败为什么必须抛错
 
-`_run_git`（`qaplat/tia.py:202`）对任何非 0 退出码都抛 `RuntimeError`，并把命令、cwd、退出码、stdout / stderr 的尾部一起带出来。实测（本文）：
+`_run_git`（`qaplat/tia.py:203`）对任何非 0 退出码都抛 `RuntimeError`，并把命令、cwd、退出码、stdout / stderr 的尾部一起带出来。实测（本文）：
 
 ```
 RuntimeError: git 读取变更失败，TIA 不能在这种状态下判断影响面：
@@ -583,16 +583,16 @@ $ git ls-files --others --exclude-standard
 #   å® = 「完」的 UTF-8 字节 e5 ae 8c，其余同理
 ```
 
-`_normalize_path`（`qaplat/tia.py:147`）挡不住它：那个函数做的是「反斜杠→斜杠、去 `./`、剥 ROOT 前缀」——它把八进制转义里的 `\` 当成**分隔符**处理，结果就是上面那串 `docs/TIA/345/256/214/...` 的假路径。
+`_normalize_path`（`qaplat/tia.py:148`）挡不住它：那个函数做的是「反斜杠→斜杠、去 `./`、剥 ROOT 前缀」——它把八进制转义里的 `\` 当成**分隔符**处理，结果就是上面那串 `docs/TIA/345/256/214/...` 的假路径。
 
 **更麻烦的是触发条件**：只有**非 ASCII 文件名**才会被转义。纯英文仓库里永远看不到这个问题——如果你在英文项目上验收通过，就以为它没问题，中文项目上就会静默失效。
 
 #### 3.8.3 修复：在源头关掉转义
 
-修在 `_run_git`（`qaplat/tia.py:202`）里，一处改动覆盖所有 git 调用：
+修在 `_run_git`（`qaplat/tia.py:203`）里，一处改动覆盖所有 git 调用：
 
 ```python
-# qaplat/tia.py:211-216（修复后的样子）
+# qaplat/tia.py:212-216（修复后的样子）
     # ``-c core.quotepath=false``：git 默认把非 ASCII 路径转义成八进制（``"\345\256\214..."``），
     # 那样拿到的是一串假路径：匹配不上覆盖索引与用例，于是被判「影响面未知」而误触发全量兜底。
     # 关掉转义后输出的是原样 UTF-8 路径，与 .coverage / 用例里的路径可以直接比。
@@ -638,10 +638,10 @@ $ git ls-files --others --exclude-standard
 
 ### 4.1 先看 v1：三级策略
 
-v1 的入口是 `select`（`qaplat/tia.py:461`）。它接收两个东西：
+v1 的入口是 `select`（`qaplat/tia.py:466`）。它接收两个东西：
 
 ```python
-# qaplat/tia.py:461（签名）
+# qaplat/tia.py:462（签名）
 def select(
     changed: Sequence[str],              # 变更文件（仓库相对路径）
     cases: Sequence[registry.CaseInfo],  # 全量用例（含每个用例引用了哪些 /api 路径）
@@ -669,11 +669,11 @@ def select(
 
 | 判据 | 实现位置 | 关键常量 |
 |---|---|---|
-| ① 关键文件 | `_is_always_full`（`qaplat/tia.py:179`） | `ALWAYS_FULL_PREFIXES`（`qaplat/tia.py:50`）、`ALWAYS_FULL_NAMES`（`qaplat/tia.py:67`） |
-| ② 测试文件 | `select` 里的 `path.startswith(_TESTCASES_PREFIX)` | `_TESTCASES_PREFIX = "testcases/"`（`qaplat/tia.py:70`） |
-| ③ 其他源码 | `_extract_paths`（`qaplat/tia.py:452`）+ 交集 | `registry.normalize_path`（`qaplat/registry.py:63`） |
+| ① 关键文件 | `_is_always_full`（`qaplat/tia.py:180`） | `ALWAYS_FULL_PREFIXES`（`qaplat/tia.py:51`）、`ALWAYS_FULL_NAMES`（`qaplat/tia.py:68`） |
+| ② 测试文件 | `select` 里的 `path.startswith(_TESTCASES_PREFIX)` | `_TESTCASES_PREFIX = "testcases/"`（`qaplat/tia.py:71`） |
+| ③ 其他源码 | `_extract_paths`（`qaplat/tia.py:453`）+ 交集 | `registry.normalize_path`（`qaplat/registry.py:63`） |
 
-`ALWAYS_FULL_PREFIXES` 的内容是**稳定排序**的 7 个前缀（`qaplat/tia.py:50`）：
+`ALWAYS_FULL_PREFIXES` 的内容是**稳定排序**的 7 个前缀（`qaplat/tia.py:51`）：
 
 ```python
 ALWAYS_FULL_PREFIXES: tuple[str, ...] = tuple(
@@ -693,7 +693,7 @@ ALWAYS_FULL_PREFIXES: tuple[str, ...] = tuple(
 
 注意 `requirements` 用的是「前缀」而不是文件名：一个前缀同时覆盖 `requirements.txt`、`requirements-perf.txt`、`requirements.lock` 三种写法。代价是会顺带覆盖 `requirements-notes.md` 这种罕见文件名——方向是「多跑」，不是漏跑，可以接受。
 
-`ALWAYS_FULL_NAMES`（`qaplat/tia.py:67`）是 4 个**任意层级**都算关键的文件名：
+`ALWAYS_FULL_NAMES`（`qaplat/tia.py:68`）是 4 个**任意层级**都算关键的文件名：
 
 ```python
 ALWAYS_FULL_NAMES: frozenset[str] = frozenset({"conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg"})
@@ -811,14 +811,14 @@ _PATH_LITERAL_RE = re.compile(r"(?<![\w.])(/api[A-Za-z0-9_\-./{}]*)")
 
 `select` 没有被删除，它有两处仍然在用：
 
-1. **没有覆盖率数据时的降级路径**：`select_from_git` 的 `data_path=None` 分支——函数定义在 `qaplat/tia.py:685`，`data_path` 为 `None` 时真正走 `select` 的代码在 **`qaplat/tia.py:705`–`712`**；CLI 找不到 `.tia-coverage`/`.coverage` 时也会走到这里（`qaplat/cli.py:175` 的 `_resolve_coverage_data`）。
+1. **没有覆盖率数据时的降级路径**：`select_from_git` 的 `data_path=None` 分支——函数定义在 `qaplat/tia.py:686`，`data_path` 为 `None` 时真正走 `select` 的代码在 **`qaplat/tia.py:706`–`712`**；CLI 找不到 `.tia-coverage`/`.coverage` 时也会走到这里（`qaplat/cli.py:176` 的 `_resolve_coverage_data`）。
 2. **教学与测试价值**：`testcases/platform/test_tia.py` 可以对着纯数据断言三级判据，不需要真跑 coverage；`select` 也是理解「为什么需要 v2」的最短路径。
 
 ---
 
 ### 4.4 `load_context_index`：把 SQLite 变成倒排索引
 
-入口（`qaplat/tia.py:386`）：
+入口（`qaplat/tia.py:387`）：
 
 ```python
 def load_context_index(
@@ -850,7 +850,7 @@ def load_context_index(
 **① 数据文件不存在 → 抛错，不返回空字典**
 
 ```python
-# qaplat/tia.py:416
+# qaplat/tia.py:417
 path = Path(data_path)
 if not path.is_file():
     raise RuntimeError(
@@ -864,7 +864,7 @@ if not path.is_file():
 **② 读 SQLite：`CoverageData` 而不是自己解析**
 
 ```python
-# qaplat/tia.py:422（节选）
+# qaplat/tia.py:423（节选）
 from coverage import CoverageData  # 函数内 import：tia 平时不依赖 coverage，只有 v2 才需要
 
 data = CoverageData(str(path))
@@ -876,7 +876,7 @@ data.read()
 **③ 路径归一化：绝对路径 → 仓库相对路径**
 
 ```python
-# qaplat/tia.py:244
+# qaplat/tia.py:245
 def _relative_to_root(measured: str, root: Path) -> str | None:
     try:
         relative = Path(measured).resolve().relative_to(root)
@@ -892,7 +892,7 @@ coverage 存的是绝对路径（`D:\DSH\test-projects\api-regression-selector\m
 **④ 每行 → 一组 nodeid**
 
 ```python
-# qaplat/tia.py:433（节选）
+# qaplat/tia.py:434（节选）
 for line, contexts in (data.contexts_by_lineno(measured) or {}).items():
     node_ids: set[str] = set()
     for context in contexts:
@@ -912,7 +912,7 @@ for line, contexts in (data.contexts_by_lineno(measured) or {}).items():
 **⑤ 索引为空 → 抛错**
 
 ```python
-# qaplat/tia.py:443
+# qaplat/tia.py:444
 if not index:
     raise RuntimeError(
         "coverage 数据里没有可用的「用例 context」：行级 TIA 只能用 "
@@ -925,7 +925,7 @@ if not index:
 
 ### 4.5 `select_by_lines`：七条判据，每层都朝「多跑」倒
 
-入口（`qaplat/tia.py:566`）：
+入口（`qaplat/tia.py:567`）：
 
 ```python
 def select_by_lines(
@@ -940,7 +940,7 @@ def select_by_lines(
 #### 4.5.1 第一步：把 hunks 合并成「文件 → 行集合」
 
 ```python
-# qaplat/tia.py:596（节选）
+# qaplat/tia.py:597（节选）
 merged: dict[str, set[int]] = {}
 for hunk in hunks:
     path = _normalize_path(hunk.path)  # 反斜杠→斜杠、去 ./ 前缀
@@ -955,7 +955,7 @@ changed = tuple(sorted(merged))
 #### 4.5.2 第二步：空输入 → 全量
 
 ```python
-# qaplat/tia.py:604
+# qaplat/tia.py:605
 if not changed:
     return _full(changed, total, "没有可用的变更行（diff 为空），无法判定影响面，按全量兜底", "full")
 ```
@@ -968,17 +968,17 @@ if not changed:
 
 | 层 | 条件 | 结果 | 代码位置 |
 |---|---|---|---|
-| ① | 关键文件（`_LINES_FULL_PREFIXES`，即 v1 清单**去掉 `qaplat/`**） | `full=True` | `qaplat/tia.py:617` |
-| ② | 在 `testcases/` 下 | 该文件全部 nodeid；无则 `full=True` | `qaplat/tia.py:619` |
-| ③ | `lines` 为空（纯删除/二进制/重命名/未跟踪） | `full=True` | `qaplat/tia.py:632` |
-| ④ | 文件不在 `index` 里 | `full=True` | `qaplat/tia.py:640` |
-| ⑤ | 变更行里含模块级哨兵 `""` | `full=True` | `qaplat/tia.py:648` |
-| ⑥ | 变更行没被任何已收集用例执行过 | `full=True` | `qaplat/tia.py:661` |
-| ⑦ | 有命中 | 选中命中 nodeid；`strategy="lines"` | `qaplat/tia.py:673` |
+| ① | 关键文件（`_LINES_FULL_PREFIXES`，即 v1 清单**去掉 `qaplat/`**） | `full=True` | `qaplat/tia.py:618` |
+| ② | 在 `testcases/` 下 | 该文件全部 nodeid；无则 `full=True` | `qaplat/tia.py:620` |
+| ③ | `lines` 为空（纯删除/二进制/重命名/未跟踪） | `full=True` | `qaplat/tia.py:633` |
+| ④ | 文件不在 `index` 里 | `full=True` | `qaplat/tia.py:641` |
+| ⑤ | 变更行里含模块级哨兵 `""` | `full=True` | `qaplat/tia.py:649` |
+| ⑥ | 变更行没被任何已收集用例执行过 | `full=True` | `qaplat/tia.py:662` |
+| ⑦ | 有命中 | 选中命中 nodeid；`strategy="lines"` | `qaplat/tia.py:674` |
 
 两个必须解释的设计点：
 
-**为什么 v2 的清单要去掉 `qaplat/`**（`qaplat/tia.py:77`）：
+**为什么 v2 的清单要去掉 `qaplat/`**（`qaplat/tia.py:78`）：
 
 ```python
 # v1 把 qaplat/** 判全量，是因为它只能靠路径字面量猜影响面，而平台层代码里根本没有 /api 字面量；
@@ -991,7 +991,7 @@ _LINES_FULL_PREFIXES: tuple[str, ...] = tuple(prefix for prefix in ALWAYS_FULL_P
 **为什么第 ⑤ 层（模块级行）必须全量**：
 
 ```python
-# qaplat/tia.py:647（节选）
+# qaplat/tia.py:648（节选）
 for line in lines:
     if _MODULE_LEVEL in (line_index.get(line) or ()):
         return _full(
@@ -1008,7 +1008,7 @@ for line in lines:
 **为什么第 ⑥ 层要「按文件严格兜底」而不是「按行兜底」**：
 
 ```python
-# qaplat/tia.py:661（节选）
+# qaplat/tia.py:662（节选）
 file_hits: set[str] = set()
 for line in lines:
     for node_id in line_index.get(line) or ():
@@ -1025,7 +1025,7 @@ if not file_hits:
 #### 4.5.4 最后：产出 `Selection`
 
 ```python
-# qaplat/tia.py:673（节选）
+# qaplat/tia.py:674（节选）
 selected_files = tuple(sorted({_file_of(node_id) for node_id in selected}))
 return Selection(
     node_ids=tuple(sorted(selected)),
@@ -1043,7 +1043,7 @@ return Selection(
 
 ### 4.6 `Selection`、`_full` 与 ratio
 
-`Selection`（`qaplat/tia.py:115`）是所有下游唯一认识的数据结构。它的 `ratio` 属性（`qaplat/tia.py:136`）：
+`Selection`（`qaplat/tia.py:116`）是所有下游唯一认识的数据结构。它的 `ratio` 属性（`qaplat/tia.py:137`）：
 
 ```python
 @property
@@ -1055,10 +1055,10 @@ def ratio(self) -> float:
 
 为什么 `total_cases == 0` 返回 0.0 而不是抛异常：空用例库是**已经发生的状态**（例如收集失败后上层仍要打印一份结果），让报表层崩掉只会把「用例库空了」伪装成「tia 代码坏了」。
 
-`_full`（`qaplat/tia.py:278`）统一构造全量结果，`node_ids` **恒为空**：
+`_full`（`qaplat/tia.py:279`）统一构造全量结果，`node_ids` **恒为空**：
 
 ```python
-# qaplat/tia.py:278（节选）
+# qaplat/tia.py:279（节选）
 return Selection(
     node_ids=(),          # 全量 = 不选任何具体 nodeid，由调用方跑整层
     full=True,
@@ -1068,7 +1068,7 @@ return Selection(
 
 为什么不把 636 个 nodeid 抄进 `node_ids`：契约里「全量」的语义是「等价于不带 `--select`」；抄一份进去只会让 JSON 变大，还会诱导调用方把 636 个 nodeid 拼进命令行（Windows 上有命令行长度上限）。
 
-`strategy` 三个取值（`qaplat/tia.py:133`）：
+`strategy` 三个取值（`qaplat/tia.py:134`）：
 
 | 值 | 含义 | 由谁产出 |
 |---|---|---|
@@ -1147,11 +1147,11 @@ return Selection(
 
 | 红线 | 代码 | 失败形态 | 为什么 |
 |---|---|---|---|
-| git 失败 | `_run_git`（`qaplat/tia.py:202`） | `RuntimeError`，带命令/cwd/退出码/stdout/stderr 尾部 | 返回空元组会被读成「没有变更 → 全都不用跑」 |
-| coverage 数据缺失/不可用 | `load_context_index`（`qaplat/tia.py:418`、`:443`） | `RuntimeError`，带路径与 `measured_files` 数量 | 返回空字典会让所有判定退化成全量，真正成因被藏起来 |
+| git 失败 | `_run_git`（`qaplat/tia.py:203`） | `RuntimeError`，带命令/cwd/退出码/stdout/stderr 尾部 | 返回空元组会被读成「没有变更 → 全都不用跑」 |
+| coverage 数据缺失/不可用 | `load_context_index`（`qaplat/tia.py:419`、`:443`） | `RuntimeError`，带路径与 `measured_files` 数量 | 返回空字典会让所有判定退化成全量，真正成因被藏起来 |
 | 用例收集失败 | `registry.collect_cases` → `CaseCollectionError`（`qaplat/registry.py:202` 起的实现） | 非 exit 5 的失败一律抛，带退出码与两路输出尾部 | 零收集被当成「没有用例覆盖」是最危险的一种错误 |
 
-CLI 层把这些异常统一折成**退出码 2**（`qaplat/cli.py:240` 的 `cmd_tia_select` 与 `qaplat/cli.py:118` 的 `cmd_gate` 都捕获 `Exception` 后返回 `EXIT_USAGE`）。这样 CI 里看到 2，就知道「不是选择结果为空，而是选择器自己坏了」。
+CLI 层把这些异常统一折成**退出码 2**（`qaplat/cli.py:261` 的 `cmd_tia_select` 与 `qaplat/cli.py:118` 的 `cmd_gate` 都捕获 `Exception` 后返回 `EXIT_USAGE`）。这样 CI 里看到 2，就知道「不是选择结果为空，而是选择器自己坏了」。
 
 ### 5.4 「全量」不等于「什么都不做」
 
@@ -1181,7 +1181,7 @@ return list(sel.node_ids) + list(args.passthrough)
 
 前面五章讲的是「怎么算出选中集」。这一章讲**算出来之后怎么真的跑起来**——也就是 `.tia-coverage` → `tia.py` → `cli.py` → `gate.py` → pytest 子进程这条链的最后三段。
 
-先把入口说明白：本仓 `qaplat` 包**没有 `__main__.py`**，所以命令行入口是 `python -m qaplat.cli`（`qaplat/cli.py:614` 的 `main`）。写成 `python -m qaplat` 会得到 `No module named qaplat.__main__`——这是本仓的既有事实，不是这次改造引入的。下文所有命令都用前者。
+先把入口说明白：本仓 `qaplat` 包**没有 `__main__.py`**，所以命令行入口是 `python -m qaplat.cli`（`qaplat/cli.py:670` 的 `main`）。写成 `python -m qaplat` 会得到 `No module named qaplat.__main__`——这是本仓的既有事实，不是这次改造引入的。下文所有命令都用前者。
 
 ### 6.1 先看总数：两个入口，一条数据流
 
@@ -1244,11 +1244,11 @@ $ python -m qaplat.cli tia select --base HEAD~1 --coverage-data .tia-coverage
 
 这条输出本身就是一次「兜底判据生效」的演示：`.github/ISSUE_TEMPLATE/config.yml` 这类从未被任何用例执行过的文件不在覆盖索引里 → 判据④（4.5.3 表）→ 全量。**注意它不是报错**：退出码是 0，结论是「这次判不了，按全量」。
 
-`cmd_tia_select` 有一条容易忽略的约定（`qaplat/cli.py:240-261`）：**恒返回 0**。「一条都没选中」也是有效结论（例如改动全落在没被任何用例引用的源码上），选择器会用 `full` 与 `reason` 表达它。只有选择器**自身**失败（git 不可用、用例收集崩了）才返回 2——那种情况下的「0 条」是假结论，不能当查询答案返回。
+`cmd_tia_select` 有一条容易忽略的约定（`qaplat/cli.py:261-284`）：**恒返回 0**。「一条都没选中」也是有效结论（例如改动全落在没被任何用例引用的源码上），选择器会用 `full` 与 `reason` 表达它。只有选择器**自身**失败（git 不可用、用例收集崩了）才返回 2——那种情况下的「0 条」是假结论，不能当查询答案返回。
 
 ### 6.3 `_resolve_coverage_data`：三态决定走 v1 还是 v2
 
-这是整条链上**唯一**决定「用哪份覆盖率数据」的地方（`qaplat/cli.py:176-195`），两个入口都调它：`cmd_gate` 在 `--select tia` 时调（`qaplat/cli.py:128`），`cmd_tia_select` 无条件调（`qaplat/cli.py:249`）。
+这是整条链上**唯一**决定「用哪份覆盖率数据」的地方（`qaplat/cli.py:176-196`），两个入口都调它：`cmd_gate` 在 `--select tia` 时调（`qaplat/cli.py:128`），`cmd_tia_select` 无条件调（`qaplat/cli.py:270`）。
 
 ```python
 # qaplat/cli.py:176-195（节选）
@@ -1324,7 +1324,7 @@ return list(sel.node_ids) + list(args.passthrough)
 
 `selected=X/Y` 里 X 是 `len(sel.node_ids)`、Y 是 `sel.total_cases`；`strategy` 三值见 4.6 节；`reason` 是判据给出的中文解释。这行是排查 TIA 行为的**第一现场**：看到 `full=True` 就别去翻 nodeid 了，先看 `reason` 说哪条判据兜底。
 
-**② `sel.full` 时只返回 `passthrough`**（`qaplat/cli.py:235-236`）：全量兜底的含义是「影响面判定不了」，这时再叠一层 nodeid 过滤，等于先声称判不了、又偷偷把范围收窄回去。所以 `full=True` 的产物就是「不带 `--select` 的原命令」，只是多了一行说明。
+**② `sel.full` 时只返回 `passthrough`**（`qaplat/cli.py:236-237`）：全量兜底的含义是「影响面判定不了」，这时再叠一层 nodeid 过滤，等于先声称判不了、又偷偷把范围收窄回去。所以 `full=True` 的产物就是「不带 `--select` 的原命令」，只是多了一行说明。
 
 **`extra` 的顺序**：`node_ids` 在前、调用方的 `passthrough` 在后。两者在 pytest 里都是「位置参数/选项」的混合体，顺序不影响语义；保持在后面是为了让调用方追加的 `--` 参数仍然排在最后（与 `build_pytest_args` 里「`extra` 放到最后」的约定一致）。
 
@@ -1420,7 +1420,7 @@ proc = subprocess.run(
 
 ### 6.8 默认关闭与三条退出码
 
-**默认关闭**：`gate --select` 的默认值是 `None`（`qaplat/cli.py:490-496`），不给时 `extra` 原样等于 `args.passthrough`（`qaplat/cli.py:138`）——与改造前逐字一致。这条是本轮的**回归红线**（bu-cli 专门验过），也是为什么 `qaplat/tia.py` 在 `cli.py` 里是**函数内 import**（`qaplat/cli.py:171-173` 的注释）：
+**默认关闭**：`gate --select` 的默认值是 `None`（`qaplat/cli.py:535-541`），不给时 `extra` 原样等于 `args.passthrough`（`qaplat/cli.py:138`）——与改造前逐字一致。这条是本轮的**回归红线**（bu-cli 专门验过），也是为什么 `qaplat/tia.py` 在 `cli.py` 里是**函数内 import**（`qaplat/cli.py:171-173` 的注释）：
 
 > `tia` 刻意在函数内部 import：它是后加的模块，写在模块顶部会让 run / gate / metrics / report 全都依赖它的存在，而「不带 `--select` 时行为逐字不变」是这一轮的回归红线。
 
@@ -1432,7 +1432,7 @@ proc = subprocess.run(
 | 1 | 门禁未达标（违规非空） | `gate.exit_code_for`（`qaplat/gate.py:359`） |
 | 2 | 用法错误 | argparse 解析失败；`--select bogus`（`choices=["tia"]`）；显式 `--coverage-data` 不存在（`qaplat/cli.py:189`）；选择器抛异常（`qaplat/cli.py:142-145`、`:257-259`） |
 
-`--select bogus` 不需要 `cmd_gate` 自己校验：`choices=["tia"]`（`qaplat/cli.py:492`）让 argparse 在解析阶段就以 `SystemExit(2)` 退出，错误信息里会列出可选值。这就是「用参数表管住取值」的好处——非法值进不了业务函数。
+`--select bogus` 不需要 `cmd_gate` 自己校验：`choices=["tia"]`（`qaplat/cli.py:537`）让 argparse 在解析阶段就以 `SystemExit(2)` 退出，错误信息里会列出可选值。这就是「用参数表管住取值」的好处——非法值进不了业务函数。
 
 ### 6.9 一条命令的完整旅程（收束）
 
@@ -1446,11 +1446,11 @@ python -m qaplat.cli gate --layer pr --select tia --coverage-data .tia-coverage
    │    ├─ tia = 函数内 import                    qaplat/cli.py:227
    │    ├─ _tia_extra(...)                      qaplat/cli.py:219
    │    │    ├─ _layer_collect_args(spec)        qaplat/cli.py:209  → ["-m", "…"]
-   │    │    ├─ tia.select_from_git(...)         qaplat/tia.py:685
+   │    │    ├─ tia.select_from_git(...)         qaplat/tia.py:686
    │    │    │    ├─ registry.collect_cases      qaplat/registry.py:202 → 子进程
-   │    │    │    ├─ tia.changed_hunks           qaplat/tia.py:333
-   │    │    │    ├─ tia.load_context_index      qaplat/tia.py:386
-   │    │    │    └─ tia.select_by_lines         qaplat/tia.py:566
+   │    │    │    ├─ tia.changed_hunks           qaplat/tia.py:334
+   │    │    │    ├─ tia.load_context_index      qaplat/tia.py:387
+   │    │    │    └─ tia.select_by_lines         qaplat/tia.py:567
    │    │    └─ 打印摘要行 + 返回 extra
    │    ├─ gate.run_layer(spec, extra)          qaplat/gate.py:187
    │    │    ├─ gate.build_pytest_args           qaplat/gate.py:139
@@ -1505,8 +1505,8 @@ python -m qaplat.cli gate --layer pr --select tia --coverage-data .tia-coverage
 
 判定路径：
 
-- v1：`testcases/` 前缀命中第②级，`by_file` 直接取出该文件的 nodeid（`qaplat/tia.py:461`）；
-- v2：`select_by_lines` 的第②级同样按文件命中（`qaplat/tia.py:616`）。
+- v1：`testcases/` 前缀命中第②级，`by_file` 直接取出该文件的 nodeid（`qaplat/tia.py:466`）；
+- v2：`select_by_lines` 的第②级同样按文件命中（`qaplat/tia.py:617`）。
 
 **为什么这一档两套策略结果相同**：改测试文件的影响面本来就是这个文件自己，不需要行级信息。这也是 v2 不把 testcases 文件丢给行级处理的原因——测试代码的行归属（fixture、参数化、import 期）比业务代码更不可靠，按文件命中更稳。
 
@@ -1903,12 +1903,12 @@ COVERAGE_FILE=.tia-coverage pytest -m "not ui" --cov=. --cov-context=test
 
 | 能力 | 函数 | 位置 |
 |---|---|---|
-| 变更文件（committed + 工作区 + 未跟踪） | `changed_files` | `qaplat/tia.py:297` |
-| 变更行（`-U0` hunk 解析） | `changed_hunks` | `qaplat/tia.py:333` |
-| 行 → 用例倒排索引 | `load_context_index` | `qaplat/tia.py:386` |
-| 纯函数行级选择 | `select_by_lines` | `qaplat/tia.py:566` |
-| 纯函数文件级选择（降级路径） | `select` | `qaplat/tia.py:461` |
-| 串起 IO 的入口（带 `data_path` 开关） | `select_from_git` | `qaplat/tia.py:685` |
+| 变更文件（committed + 工作区 + 未跟踪） | `changed_files` | `qaplat/tia.py:298` |
+| 变更行（`-U0` hunk 解析） | `changed_hunks` | `qaplat/tia.py:334` |
+| 行 → 用例倒排索引 | `load_context_index` | `qaplat/tia.py:387` |
+| 纯函数行级选择 | `select_by_lines` | `qaplat/tia.py:567` |
+| 纯函数文件级选择（降级路径） | `select` | `qaplat/tia.py:462` |
+| 串起 IO 的入口（带 `data_path` 开关） | `select_from_git` | `qaplat/tia.py:686` |
 
 平台层自己的测试（部·测试交付）：`testcases/platform/test_tia.py` **53 条全绿**，`qaplat/tia.py` 的行覆盖率为 **90%**。这组用例覆盖了三套判据的主要分支（关键文件、testcases 命中、路径交集、空输入、索引缺失、模块级行、行命中为空），也是「纯函数可以直接喂构造数据断言」这个设计最直接的收益——它们不需要真的改代码或采覆盖率。
 
@@ -2029,19 +2029,19 @@ cli.main                          qaplat/cli.py:614
  └─ cmd_tia_select                qaplat/cli.py:240
      ├─ _resolve_coverage_data    qaplat/cli.py:175
      ├─ _pytest_args_from         qaplat/cli.py:199
-     ├─ tia.select_from_git       qaplat/tia.py:685
+     ├─ tia.select_from_git       qaplat/tia.py:686
      │   ├─ registry.collect_cases    qaplat/registry.py:202
      │   │   └─ pytest --collect-only 子进程
-     │   ├─ tia.changed_hunks          qaplat/tia.py:333
-     │   │   ├─ tia.changed_files      qaplat/tia.py:297
-     │   │   │   └─ _run_git   ×1~3    qaplat/tia.py:202
-     │   │   └─ _new_lines_from_diff   qaplat/tia.py:261
-     │   ├─ tia.load_context_index     qaplat/tia.py:386
+     │   ├─ tia.changed_hunks          qaplat/tia.py:334
+     │   │   ├─ tia.changed_files      qaplat/tia.py:298
+     │   │   │   └─ _run_git   ×1~3    qaplat/tia.py:203
+     │   │   └─ _new_lines_from_diff   qaplat/tia.py:262
+     │   ├─ tia.load_context_index     qaplat/tia.py:387
      │   │   ├─ coverage.CoverageData.read
-     │   │   ├─ _relative_to_root      qaplat/tia.py:244
-     │   │   └─ _context_node_id       qaplat/tia.py:369
-     │   └─ tia.select_by_lines        qaplat/tia.py:566
-     └─ render_json / render_text      qaplat/tia.py:747 / 715
+     │   │   ├─ _relative_to_root      qaplat/tia.py:245
+     │   │   └─ _context_node_id       qaplat/tia.py:370
+     │   └─ tia.select_by_lines        qaplat/tia.py:567
+     └─ render_json / render_text      qaplat/tia.py:748 / 715
 ```
 
 ### B.2 `gate --layer pr --select tia`（判定 + 真跑）
@@ -2051,7 +2051,7 @@ cli.main                          qaplat/cli.py:614
  └─ cmd_gate                       qaplat/cli.py:118
      ├─ _resolve_coverage_data     qaplat/cli.py:175
      ├─ _tia_extra                 qaplat/cli.py:219
-     │   └─ tia.select_from_git    qaplat/tia.py:685   ← 与 tia select 同一条路径
+     │   └─ tia.select_from_git    qaplat/tia.py:686   ← 与 tia select 同一条路径
      ├─ gate.run_layer             qaplat/gate.py:187
      │   ├─ gate.build_pytest_args qaplat/gate.py:139
      │   └─ pytest 子进程（带 nodeid）
@@ -2094,13 +2094,13 @@ charts/配置：pyproject.toml（mypy/ruff/perfile 覆盖率）        ▼
 ## 附录 D FAQ
 
 **Q1：为什么 `ratio` 在全量时是 0，而不是 1？**
-因为 `_full` 把 `node_ids` 置空（`qaplat/tia.py:278`），「全量」的语义是「不选具体 nodeid」。要判断是不是全量，看 `full` 字段，不要看 `ratio`。
+因为 `_full` 把 `node_ids` 置空（`qaplat/tia.py:279`），「全量」的语义是「不选具体 nodeid」。要判断是不是全量，看 `full` 字段，不要看 `ratio`。
 
 **Q2：改了 `qaplat/tia.py` 自己会怎样？**
 它不在覆盖索引里（采集期不 import 它），所以判「不在覆盖索引里」→ 全量。安全，但等于这次 TIA 没生效。
 
 **Q3：为什么 `select` 不直接自己读文件？**
-契约要求它是纯函数（测试要能只喂构造数据）。第③级的路径确实只能从变更源码取，这是算法的信息需求，所以用 `path_reader` 注入：默认 `registry.read_referenced_paths`，测试传替身时全程零 IO（`qaplat/tia.py:461` 的 docstring）。
+契约要求它是纯函数（测试要能只喂构造数据）。第③级的路径确实只能从变更源码取，这是算法的信息需求，所以用 `path_reader` 注入：默认 `registry.read_referenced_paths`，测试传替身时全程零 IO（`qaplat/tia.py:462` 的 docstring）。
 
 **Q4：没有 `.tia-coverage` 会怎样？**
 `_resolve_coverage_data` 找不到就返回 `None`，`select_from_git` 退回 v1（文件级）。日志里会打一行「未找到覆盖率数据，退化为文件级策略」。
