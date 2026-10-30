@@ -16,7 +16,7 @@
 | `qaplat/_dump.py` | +11 | 采集插件加 `trylast=True`，修正分层分母与跨层选中 |
 | `testcases/platform/test_tia.py` | 741 / 53 条 | 覆盖 v1/v2 共 16 个分支，`qaplat/tia.py` 行覆盖 90% |
 | `docs/tia-plan.md` | 199 | 契约基准：接口、CLI、验收数字、不做什么 |
-| `docs/TIA完全入门.md` | 1992 | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
+| `docs/TIA完全入门.md` | 2057 | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
 
 ## 核心数字
 
@@ -28,14 +28,23 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 → 收集总数 636；其中 3 条 failed 是上游基线就有的（见下文「不要背锅」）
 ```
 
+> **这是首采（`test_tia.py` 还不存在时）的口径。** 当前工作区实测是
+> `3 failed, 641 passed, 34 deselected, 11 xfailed in 139.17s`、收集 **689**（636 + 53 条
+> 平台自测）。两套数字都对，但**分母不同不能互相换算**：引用「省了多少」时，分子分母要
+> 取自同一次运行。
+
 ### 索引规模
 
 | 项 | 值 | 说明 |
 |---|---|---|
-| `.coverage.tia` | 757,760 字节 | SQLite，每行被谁执行过 |
-| `measured_files` | 121 | coverage 记录到的文件数 |
-| context 总数 | 1807 | 「某用例某阶段执行过某行」的条目数 |
-| 建索引后可用文件 | 117 | 121 减去 4 个没有可用 context 的文件 |
+| `.tia-coverage` | 811,008 字节 | SQLite，每行被谁执行过（**2026-10-31 重采口径**；首采是 757,760） |
+| `measured_files` | 122 | coverage 记录到的文件数（首采 121，多出来的是 `test_tia.py` 自身） |
+| context 总数 | 1966 | 「某用例某阶段执行过某行」的条目数（首采 1807） |
+| 建索引后可用文件 | 119 | 122 减去 3 个没有可用 context 的文件，剩下的 3 个是 `mes_web/*` |
+
+> 这几个数**随用例数变化，不是常数**。首采时 `test_tia.py` 还不存在，连 `qaplat/tia.py`
+> 自己都没进索引（121 / 1807 / 117，差 4 个）；补上 53 条平台自测后变成 122 / 1966 / 119，
+> 差 3 个。引用时把采集时间一起引，别把两个口径的数混着算。
 
 ### 行级选择效果（四个真实场景）
 
@@ -46,7 +55,10 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 | `mock_server/quantity.py` / `idempotency.py` 某行 | 1 条 | 0.15% | 同上，59 / 82 行被覆盖 |
 | `qaplat/registry.py:70` | 11 条 | 1.7% | 平台层纯函数，被 11 个单测覆盖 |
 
-**69–89 倍**这个量级要谨慎表述：全量 196.55s 是 602 条用例的墙钟，单条 2.21s 里约 2 秒是 pytest 固定启动开销（起 mock_server、加载插件、收集）。用例越少，固定开销占比越高，倍数不是线性可推的。
+**倍数只能当量级看，且必须连分母一起报**：2.21s（单条，墙钟）/ 196.55s（首采 602 条全量）≈ **89 倍**；
+按当前全量 139.17s 算则是 **≈ 63 倍**；若用 pytest 内部计时 2.83s 对 196.55s 则是 **≈ 69 倍**。
+三个数都真实，差别全在「分子分母取自哪次运行」。单条 2.21s 里约 2 秒是 pytest 固定启动开销
+（起 `mock_server`、加载插件、收集），用例越少固定开销占比越高，倍数不是线性可推的——**对外只写「量级为数十倍」，别写死某一个数**。
 
 ### 漏检实验（这是"可不可信"的唯一硬证据）
 
@@ -58,7 +70,8 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 | 其中基线失败（改动前就有） | 3 条 |
 | **这次改动造成的真红** | **7 条** |
 | TIA 对第 70 行的选中集 | 11 条 |
-| **漏检** | **0 条**（7 条真红全部落在选中集内；另 3 条是索引陈旧，见限制 3） |
+| **漏检（旧索引，按定义直算）** | **3 条 / 7 条 ≈ 43%** —— 4 条在选中集内，3 条在 `testcases/platform/test_tia.py`（采集之后才新增，索引里没有），见限制 3 |
+| **漏检（补采后复算）** | **0 条 / 7 条** —— 重采后同一行选中 34 条，那 3 条全部命中（已实测） |
 
 实验后已原样恢复，`git diff qaplat/registry.py` 为空，platform 层回到 `3 failed, 286 passed`。
 
@@ -79,11 +92,11 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 ```bash
 cd D:/DSH/test-projects/api-regression-selector
 VENV=/d/DSH/test-projects/fullstack-test-framework/.venv/Scripts/python.exe
-COVERAGE_FILE=.coverage.tia "$VENV" -m pytest -m "not ui" \
+COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
   --cov=. --cov-context=test --cov-report=
 ```
 
-这是**建索引**，不是跑测试——它顺带把结果跑一遍，产出 `.coverage.tia`。
+这是**建索引**，不是跑测试——它顺带把结果跑一遍，产出 `.tia-coverage`。
 
 ### 2. 看这次改动会影响哪些用例（不跑测试）
 
@@ -97,7 +110,7 @@ COVERAGE_FILE=.coverage.tia "$VENV" -m pytest -m "not ui" \
 ### 3. 在门禁里用（默认关闭，必须显式开）
 
 ```bash
-"$VENV" -m qaplat.cli gate --layer smoke --select tia --coverage-data .coverage.tia
+"$VENV" -m qaplat.cli gate --layer smoke --select tia --coverage-data .tia-coverage
 ```
 
 输出里会有一行：
@@ -142,7 +155,7 @@ COVERAGE_FILE=.coverage.tia "$VENV" -m pytest -m "not ui" \
 |---|---|
 | `testcases/platform/test_tia.py` | 53 passed |
 | `-m platform` | 3 failed（基线）, 286 passed, 400 deselected |
-| `qaplat/tia.py` 行覆盖 | 90%（267 stmts / 27 miss，未覆盖的是 git 与 CLI 接线） |
+| `qaplat/tia.py` 行覆盖 | 90%（267 stmts / 27 miss；未覆盖的主要是 `_run_git` 的真 git 调用、CLI 接线，以及 `select` / `select_by_lines` 里「未命中任何用例 → 全量」的两条算法兜底分支，`qaplat/tia.py:553` 与 `:671`） |
 | `ruff check` / `format --check` | 通过 |
 | 全仓 `mypy` | 122 文件 0 issue |
 | 上游仓零改动 | `dfc9fe6` dirty 0 |

@@ -178,7 +178,7 @@ def _resolve_coverage_data(arg: str | None) -> Path | None:
 
     显式给的路径不存在时**报错退出 2**，不静默退回 v1：调用方既然点名了这份数据，悄悄
     换一套判据只会让人以为行级生效了，然后拿着「文件级选中集」去解释行级效果。
-    没给时才走约定：先 ``.coverage.tia``（``pytest --cov-context=test`` 的产物），再
+    没给时才走约定：先 ``.tia-coverage``（``pytest --cov-context=test`` 的产物），再
     ``.coverage``；两份都没有就返回 ``None``，并明说退化了——否则日志里看不出这次是行级
     还是文件级。
     """
@@ -188,7 +188,7 @@ def _resolve_coverage_data(arg: str | None) -> Path | None:
             print(f"覆盖率数据不存在：{arg}", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
         return path
-    for candidate in (ROOT / ".coverage.tia", ROOT / ".coverage"):
+    for candidate in (ROOT / ".tia-coverage", ROOT / ".coverage"):
         if candidate.exists():
             return candidate
     print("[qaplat] tia: 未找到覆盖率数据，退化为文件级策略", flush=True)

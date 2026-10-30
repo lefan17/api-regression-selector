@@ -19,7 +19,7 @@
    一律构造 `CaseInfo` 直接传参（不依赖磁盘上的真实用例集，否则断言会随用例库膨胀而漂移）。
 3. 行级索引（v2）优先用 `tmp_path` 里自造的 `.coverage`（`coverage.CoverageData` 写真实
    sqlite，`set_context()` 决定每个 context 的行归属）；只有一条集成用例读仓库根真实的
-   `.coverage.tia`（602 条用例、117 个文件），它不存在就 skip——不能因为「数据没采到」
+   `.tia-coverage`（602 条用例、117 个文件），它不存在就 skip——不能因为「数据没采到」
    让平台层单测变红。
 """
 
@@ -38,8 +38,8 @@ from qaplat import registry, tia
 pytestmark = pytest.mark.platform
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-#: 仓库根的真实行级覆盖数据（仓库根 `.coverage.tia`，602 条用例采集，117 个被测文件）。
-REAL_COVERAGE = REPO_ROOT / ".coverage.tia"
+#: 仓库根的真实行级覆盖数据（仓库根 `.tia-coverage`，602 条用例采集，117 个被测文件）。
+REAL_COVERAGE = REPO_ROOT / ".tia-coverage"
 
 TEST_FILE = "testcases/api/test_login_contract.py"
 OTHER_TEST_FILE = "testcases/platform/test_gate_layers.py"
@@ -718,17 +718,23 @@ def test_coverage_without_case_contexts_raises(tmp_path: Path) -> None:
 
 
 def test_real_coverage_tia_index_has_the_expected_shape() -> None:
-    """集成：仓库根真实的 `.coverage.tia`（602 条用例的采集）必须能读成 117 个文件的索引。
+    """集成：仓库根真实的 `.tia-coverage` 必须能读成一份结构合理的行级索引。
 
-    文件不存在就 skip：它由 CI 采集、不进 git 必备路径，平台层单测不该因为「本机没采过」
-    而变红。断言 117 是这份数据的固定事实（2026-10 采集），换数据时应当同步更新这条用例。
+    文件不存在就 skip：它由采集产出、不进 git，平台层单测不该因为「本机没采过」变红。
+
+    这里**刻意不断言精确文件数**：索引规模随「仓库里有多少被执行的模块」变化，每新增一个
+    被覆盖的源文件就会 +1（实测从 117 涨到 119，只因为多了一个 test_tia.py），写死数字
+    等于让一条本该验「读取链路通不通」的用例变成「采集快照比对」，下次采集必红。
+    真正要守住的是结构：规模下界、关键文件在、行号是 int、模块级哨兵存在、nodeid 干净。
     """
     if not REAL_COVERAGE.is_file():
         pytest.skip(f"未采集到行级覆盖数据：{REAL_COVERAGE}")
 
     index = tia.load_context_index(REAL_COVERAGE)
 
-    assert len(index) == 117
+    # 下界而非等值：这份索引覆盖 qaplat/ + mock_server/ + testcases/ 的主要模块，
+    # 2026-10 实测 119；低于 100 说明读取链路大面积失效，值得红。
+    assert len(index) >= 100
     assert "qaplat/registry.py" in index
     assert "mock_server/services.py" in index
     registry_lines = index["qaplat/registry.py"]

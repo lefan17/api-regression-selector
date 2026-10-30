@@ -410,8 +410,8 @@ def load_context_index(
     数据缺失时**抛错而不是返回空字典**：空索引会让所有判定退化为全量（看似安全），但真正
     的成因（``--data`` 写错、忘了 ``--cov-context=test``、在别的仓库采集的）就被完全藏起
     来了——这类「静默退化」正是 TIA 最不该有的失效方式。CI 里采集通常写
-    ``COVERAGE_FILE=.coverage.tia``（``.coveragerc`` 开了 ``parallel=true``，结束时自动
-    combine 成单份），所以 ``data_path`` 传 ``Path(".coverage.tia")`` 即可。
+    ``COVERAGE_FILE=.tia-coverage``（``.coveragerc`` 开了 ``parallel=true``，结束时自动
+    combine 成单份），所以 ``data_path`` 传 ``Path(".tia-coverage")`` 即可。
     """
     path = Path(data_path)
     if not path.is_file():

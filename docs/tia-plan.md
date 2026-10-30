@@ -72,7 +72,9 @@
 
 - **粒度是文件**：`mock_server/routers.py` 里所有路由定义在一个文件，
   改任何一个路由都会提取出全部 `/api/*`，退化为大部分用例。
-  行级影响分析（coverage `--cov-context=test`）是 v2，本版不做。
+  行级影响分析（coverage `--cov-context=test`）是 v2，**已实现**：`select_by_lines` 按
+  「这一行被谁执行过」选用例，文件级 v1 退化为兜底。实测把 `routers.py` 的粒度从
+  「636 条全跑」压到「1 条」（7.5 节）。
 - **不识别动态路径**：`f"/api/{x}"` 这类拼接无法被字面量正则提取 → 落入「paths 为空」→ 全量兜底（安全）。
 - **不处理删除的用例**：nodeid 已不存在时归入「匹配不到」→ 全量兜底。
 
@@ -103,14 +105,21 @@ def changed_files(base: str = "HEAD~1", *, include_worktree: bool = True,
     """git diff --name-only base...HEAD（committed）+ 工作区/未跟踪（可选）。"""
 
 
-def select(changed: Sequence[str], cases: Sequence[registry.CaseInfo]) -> Selection:
-    """纯函数：不做 IO、不跑 pytest。测试全靠它。"""
+def select(changed: Sequence[str], cases: Sequence[registry.CaseInfo], *,
+           path_reader: PathReader | None = None) -> Selection:
+    """v1 文件级选择：不做 git、不起子进程；path_reader 是唯一可能读盘的地方。"""
+
+
+def select_by_lines(hunks: Sequence[ChangedHunk], index: ContextIndex,
+                    cases: Sequence[registry.CaseInfo]) -> Selection:
+    """v2 行级选择（已实现）：变更行 → 执行过该行的 nodeid 集合。"""
 
 
 def select_from_git(base: str = "HEAD~1", *, pytest_args: Sequence[str] = (),
                     include_worktree: bool = True,
-                    cwd: Path | None = None) -> Selection:
-    """changed_files + registry.collect_cases → select。"""
+                    cwd: Path | None = None,
+                    data_path: Path | None = None) -> Selection:
+    """changed_files + registry.collect_cases → select；给了 data_path 就走 v2 行级。"""
 
 
 def render_text(sel: Selection) -> str
@@ -122,6 +131,7 @@ def render_json(sel: Selection) -> str   # 固定字段，供 CI 解析
 ```json
 {
   "full": false,
+  "strategy": "files",
   "reason": "命中 3 个测试文件、12 条接口路径",
   "total_cases": 636,
   "selected": 87,
@@ -180,7 +190,7 @@ qaplat gate --layer pr --select tia [--base HEAD~1]
 | **中书** | `qaplat/tia.py`（新增，唯一写入者） | 第 4.1 节全部函数 + docstring 讲清每级判据 |
 | **部·CLI** | `qaplat/cli.py` | 第 4.2 节两个入口；不动其他命令 |
 | **部·测试** | `testcases/platform/test_tia.py`（新增） | 纯函数分支覆盖 + 真实仓库集成用例 |
-| **部·CI** | `.github/workflows/tia.yml`（新增） | 仅 `workflow_dispatch`，不进 PR 门 |
+| **部·CI** | `.github/workflows/tia.yml`（**本轮未落地**：只做了本地 CLI，CI workflow 留到下一轮） | 仅 `workflow_dispatch`，不进 PR 门 |
 | **尚书** | `docs/tia-report.md`（新增） | 汇总实测数字与漏检率 |
 | **门下**（fresh subagent） | 只读 | 按五条判据逐项核验 |
 
@@ -197,7 +207,7 @@ qaplat gate --layer pr --select tia [--base HEAD~1]
 ## 8. 不做什么（明确排除）
 
 - 不引入 `pytest-testmon`、`coverage` 之外的新依赖
-- 不做行级影响分析（v2）
+- 不做比「行」更细的影响分析（函数级 / 表达式级 / 分支级）；行级（v2）**已实现**
 - 不改 `gate.evaluate()` 的判据与阈值
 - 不改 `qaplat/FROZEN_CLI.md` 与任何 `FROZEN_*` 文件
 - 不默认开启 `--select tia`，不把它塞进 PR 流水门（先手动跑一周）

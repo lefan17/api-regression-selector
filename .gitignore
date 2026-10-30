@@ -86,3 +86,7 @@ qaplat/.cache/
 # 目录会被 `git ls-files --others` 当成「本次变更」，于是 TIA 每次都退化成全量兜底。
 /tmp*
 /qaplat-collect-*/
+
+# TIA 索引文件名刻意不以 .coverage 开头：.coveragerc 是 parallel=true，pytest-cov 的
+# erase() 会按 `.coverage.*` 模式删除分片，`.coverage.tia` 会被一并删掉。
+.tia-coverage
