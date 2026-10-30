@@ -1537,21 +1537,21 @@ index["mock_server/services.py"][130] → 1 个 nodeid
 
 ### 7.5 场景 D：改 `routers.py` 的 `readyz`（v1 的教学案例）
 
-改动是第 **64** 行：
+改动是第 **65** 行：
 
 ```python
-# mock_server/routers.py:61-66
+# mock_server/routers.py:62-66
 @router.get("/readyz", tags=["system"], summary="就绪探针")
 def readyz():
-    with read_tx() as conn:
-        conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()   # ← 第 64 行
+    with read_tx() as conn:                                    # 第 64 行
+        conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()   # ← 第 65 行
     return {"status": "READY"}
 ```
 
 | 判据 | 结果 |
 |---|---|
 | v1：`read_referenced_paths("mock_server/routers.py")` | **`()`（0 条）** → `full=True` → 636 条 |
-| v2：`index["mock_server/routers.py"][64]` | **1 个 nodeid** → 选中 **1 条** |
+| v2：`index["mock_server/routers.py"][65]` | **1 个 nodeid** → 选中 **1 条** |
 | 选中的 nodeid | `testcases/contract/test_contract_export.py::test_live_error_status_codes_are_reachable` |
 | `ratio` | **1/636 ≈ 0.0016** |
 | 只跑这 1 条的墙钟 | **2.83s**（Lead 实跑） |
@@ -1563,6 +1563,52 @@ def readyz():
 1. **v1 为什么输**：路由写的是 `@router.get("/readyz")`，`/api/v1` 前缀在 `mock_server/app.py:50` 的 `include_router(router, prefix=API_PREFIX)` 里，而提取正则只认 `/api` 开头（`qaplat/registry.py:33`）。所以 v1 对这个文件提取 0 条 → 全量。
 2. **v2 为什么赢**：不问 URL，只问「这一行被谁执行过」。`readyz` 只被契约层那一条用例打到过，所以改它只影响那一条。
 3. **69 倍不是常态**：2.83s 里含 pytest 启动与 `mock_server` 起服务的固定开销；如果选中的是 7 条（场景 C），耗时会高于 2.83s，但仍然远低于 196.55s。
+
+#### 7.5.1 在命令行里把这条链真的走一遍
+
+上面那张表是直接调 `select_by_lines()` 拿到的。真正在终端跑，是这样一个来回（工作区干净时）：
+
+```bash
+# 只动一行：在 readyz 那次查询的行尾加个注释，不改任何行为
+sed -i '65s/$/  # tia-demo/' mock_server/routers.py
+
+# 看这次改动会影响哪些用例（不跑测试）
+python -m qaplat.cli tia select --base HEAD
+```
+
+输出：
+
+```
+模式: 部分选择（lines 策略）
+原因: 命中 1 条用例（分布在 1 个测试文件、覆盖 1 条变更行）
+变更文件: 1 个
+  - mock_server/routers.py
+命中测试文件: 1 个
+  - testcases/contract/test_contract_export.py
+命中接口路径: 0 条
+选中: 1 / 689 条用例（0.15%）
+用例:
+  - testcases/contract/test_contract_export.py::test_live_error_status_codes_are_reachable
+已知限制: 影响面按文件/行粒度判定；动态拼接路径提取不到会退化为全量；已删除用例匹配不到同样退化为全量
+```
+
+`--json` 是同一份结果的机器可读版：
+
+```json
+{"full": false, "strategy": "lines", "selected": 1, "ratio": 0.0015,
+ "total_cases": 689, "changed_files": ["mock_server/routers.py"]}
+```
+
+**分母是 689，不是 636**——636 是采集 `.coverage.tia` 那一刻的口径，之后又新增了 53 条平台自测（`test_tia.py`），所以当前全量是 689。这就是 6.5 讲的「分母看口径」，别拿两个分母的数直接比。
+
+只跑被选中的那一条：
+
+```bash
+python -m pytest "testcases/contract/test_contract_export.py::test_live_error_status_codes_are_reachable" -q
+# 1 passed in 2.21s
+```
+
+**2.21s vs 196.55s ≈ 89 倍**。它和上面那个 2.83s 不矛盾：两次是不同时间的独立运行，pytest 报的自身计时本身就有波动，而倍数的大头是「起一次 pytest + 起一次 `mock_server`」的固定开销——所以这个倍数只能当量级看，不能当常数用。
 
 ### 7.6 四场景汇总
 
