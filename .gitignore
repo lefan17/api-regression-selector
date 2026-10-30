@@ -80,3 +80,9 @@ qaplat/.cache/
 .tmp/mes_web/
 .coverage.json
 .cov-check.json
+
+# pytest 的 tmpdir fixture 会在仓库根建 `tmp<随机>` 目录（平台层那几条 confcutdir
+# 用例失败时尤其容易留下），qaplat 采集被中断也会留下 `qaplat-collect-*`。这些未清理的
+# 目录会被 `git ls-files --others` 当成「本次变更」，于是 TIA 每次都退化成全量兜底。
+/tmp*
+/qaplat-collect-*/
