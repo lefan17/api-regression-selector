@@ -89,4 +89,6 @@ qaplat/.cache/
 
 # TIA 索引文件名刻意不以 .coverage 开头：.coveragerc 是 parallel=true，pytest-cov 的
 # erase() 会按 `.coverage.*` 模式删除分片，`.coverage.tia` 会被一并删掉。
-.tia-coverage
+# 末尾的 * 是为了同时盖住 `.tia-coverage.head`（索引旁的 HEAD 标记）：它若被当成未跟踪文件，
+# `git ls-files --others` 会认为「本次新增了一个文件」→ 影响面未知 → 每次 select 全量兜底。
+.tia-coverage*

@@ -190,7 +190,7 @@ qaplat gate --layer pr --select tia [--base HEAD~1]
 | **中书** | `qaplat/tia.py`（新增，唯一写入者） | 第 4.1 节全部函数 + docstring 讲清每级判据 |
 | **部·CLI** | `qaplat/cli.py` | 第 4.2 节两个入口；不动其他命令 |
 | **部·测试** | `testcases/platform/test_tia.py`（新增） | 纯函数分支覆盖 + 真实仓库集成用例 |
-| **部·CI** | `.github/workflows/tia.yml`（**本轮未落地**：只做了本地 CLI，CI workflow 留到下一轮） | 仅 `workflow_dispatch`，不进 PR 门 |
+| **部·CI** | `.github/workflows/tia.yml`（**已落地**：仅 `workflow_dispatch`，不进 PR 门） | 采集 → `tia capture` → 选择/门禁 |
 | **尚书** | `docs/tia-report.md`（新增） | 汇总实测数字与漏检率 |
 | **门下**（fresh subagent） | 只读 | 按五条判据逐项核验 |
 

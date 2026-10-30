@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 from collections.abc import Sequence
@@ -745,3 +746,110 @@ def test_real_coverage_tia_index_has_the_expected_shape() -> None:
     assert tia._MODULE_LEVEL in every_node
     assert all(node_id == "" or "::" in node_id for node_id in every_node)
     assert all(not any(stage in node_id for stage in ("|run", "|setup", "|teardown")) for node_id in every_node)
+
+
+# --------------------------------------------------------------------------- 索引新鲜度
+#
+# 这一组守的是「静默少跑」：索引比 HEAD 旧时，新增的测试文件在索引里没有数据，
+# 选择器会安静地少选几条——不报错、不提示。漏检实验里旧索引下漏检 3/7 就是这条路径。
+# 所以这里要钉死：记录 HEAD 能往返、坏文件不炸、陈旧必须能被判成 True。
+
+
+def test_head_marker_path_appends_suffix_without_moving_directory(tmp_path: Path) -> None:
+    """标记文件与索引同目录、名字加后缀；不改目录也不改扩展名语义。"""
+    marker = tia.head_marker_path(tmp_path / ".tia-coverage")
+
+    assert marker == tmp_path / ".tia-coverage.head"
+    assert marker.parent == tmp_path
+
+
+def test_write_then_read_index_head_round_trips(tmp_path: Path) -> None:
+    """写进去的 HEAD 必须原样读得回来，并且真的等于当前 git HEAD。"""
+    data = tmp_path / ".tia-coverage"
+    data.write_bytes(b"fake-sqlite-placeholder")
+
+    marker = tia.write_index_head(data, cwd=REPO_ROOT)
+
+    assert marker.is_file()
+    payload = tia.read_index_head(data)
+    assert payload is not None
+    assert (
+        payload["head"]
+        == subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True, check=True
+        ).stdout.strip()
+    )
+    assert payload["coverage_file"] == ".tia-coverage"
+    assert payload["captured_at"].endswith("+00:00")
+
+
+def test_read_index_head_returns_none_when_marker_is_absent(tmp_path: Path) -> None:
+    """没有标记文件 = 新鲜度未知，不是错误：必须返回 None 而不是抛。"""
+    assert tia.read_index_head(tmp_path / ".tia-coverage") is None
+
+
+def test_read_index_head_returns_none_on_corrupt_marker(tmp_path: Path) -> None:
+    """标记文件被写坏时返回 None：新鲜度判断可以失效，但它不能把选择流程带崩。"""
+    data = tmp_path / ".tia-coverage"
+    data.write_bytes(b"x")
+    tia.head_marker_path(data).write_text("{not json", encoding="utf-8")
+
+    assert tia.read_index_head(data) is None
+
+
+def test_staleness_reports_unknown_when_marker_is_absent(tmp_path: Path) -> None:
+    """无标记时返回 (False, 说明)——「不知道」不阻止使用，但要说清不知道什么。"""
+    stale, message = tia.index_staleness(tmp_path / ".tia-coverage", cwd=REPO_ROOT)
+
+    assert stale is False
+    assert "未记录采集时的 HEAD" in message
+
+
+def test_staleness_reports_synced_when_head_matches(tmp_path: Path) -> None:
+    """刚 capture 完再查，必须是「同步」而不是「落后」。"""
+    data = tmp_path / ".tia-coverage"
+    data.write_bytes(b"x")
+    tia.write_index_head(data, cwd=REPO_ROOT)
+
+    stale, message = tia.index_staleness(data, cwd=REPO_ROOT)
+
+    assert stale is False
+    assert "同步" in message
+
+
+def test_staleness_detects_a_commit_the_index_predates(tmp_path: Path) -> None:
+    """标记里的 HEAD 与当前不同时判 True，并给出「落后」说明。
+
+    这里用一个**不可能存在的** commit id：目的不是算准「落后几个提交」，而是证明
+    「只要两个 HEAD 不相等就一定判陈旧」——相比「恰好等于 HEAD 才算新鲜」，
+    这个方向宁可多报一次过期，也不要放过一次真过期。
+    """
+    data = tmp_path / ".tia-coverage"
+    data.write_bytes(b"x")
+    stale, _ = tia.index_staleness(data, cwd=REPO_ROOT)
+    assert stale is False  # 无标记
+
+    marker = tia.head_marker_path(data)
+    marker.write_text(json.dumps({"head": "0" * 40}), encoding="utf-8")
+
+    stale, message = tia.index_staleness(data, cwd=REPO_ROOT)
+
+    assert stale is True
+    assert "落后" in message
+
+
+def test_capture_command_writes_marker_and_refuses_missing_data(tmp_path: Path) -> None:
+    """``tia capture``：数据在就写标记并返回 0，不在就返回退出码 2（绝不静默通过）。"""
+    from qaplat import cli
+
+    missing = tmp_path / ".tia-coverage"
+    assert cli.cmd_tia_capture(_capture_args(missing)) == cli.EXIT_USAGE
+
+    missing.write_bytes(b"x")
+    assert cli.cmd_tia_capture(_capture_args(missing)) == 0
+    assert tia.head_marker_path(missing).is_file()
+
+
+def _capture_args(data_path: Path) -> argparse.Namespace:
+    """给 ``cmd_tia_capture`` 造一个最小 Namespace：它只读 ``coverage_data``。"""
+    return argparse.Namespace(coverage_data=str(data_path))

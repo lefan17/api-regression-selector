@@ -1,0 +1,92 @@
+name: TIA（变更 → 测试选择）
+
+# 为什么只手动触发、不进 push/PR 门
+# --------------------------------
+# TIA 的正确性依赖「索引新鲜度」，而采一次全量 per-test 覆盖率实测要 140–190s。
+# 在把它接进 PR 流水门之前，先用真实 PR 的 diff 分布攒两周数据，看两件事：
+#
+#   1) **兜底率**：多少比例的改被判成 full=True —— 那等于没省。
+#   2) **误选率**：选中集有没有真的覆盖受影响面（对照全量结果看新增失败）。
+#
+# 这两个数没攒够就挂进 PR 门，是拿「看起来快了」换「漏跑了没人知道」。
+# 漏跑不会报错，它只会让门禁绿着放行一次回归——这是 TIA 唯一真正的风险。
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "变更基准（git diff base...HEAD）"
+        required: false
+        default: "origin/main"
+        type: string
+      layer:
+        description: "给了层就跑 gate --select tia（smoke/api/platform/pr）；留空只打印选择结果，不跑用例"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    # 30 分钟：采集本身约 3 分钟，加上依赖安装与选中的用例执行，正常不会超过 10 分钟。
+    # 没有上限时卡死的 job 会占满默认 360 分钟，把并发名额堵住。
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # git diff base...HEAD 需要两侧的历史都在本地，浅克隆会让它退化成
+          # 「找不到 base」→ 全量兜底。这里必须 fetch-depth: 0。
+          fetch-depth: 0
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 采集 per-test 覆盖率（唯一一次全量运行）
+        env:
+          # 索引文件名刻意不以 .coverage 开头：.coveragerc 是 parallel=true，
+          # pytest-cov 的 erase() 会按 `.coverage.*` 删除分片，`.coverage.tia` 会被误删。
+          COVERAGE_FILE: .tia-coverage
+        run: |
+          python -m pytest -m "not ui" --cov=. --cov-context=test --cov-report= -q
+
+      - name: 记录 HEAD（让下一次能判断索引是否过期）
+        run: |
+          python -m qaplat.cli tia capture --coverage-data .tia-coverage
+
+      - name: 算出本次改动该跑哪些用例
+        env:
+          BASE: ${{ inputs.base }}
+          LAYER: ${{ inputs.layer }}
+        run: |
+          if [ -z "$BASE" ]; then BASE=origin/main; fi
+          if [ -n "$LAYER" ]; then
+            # gate --select tia：先算选择集，再只跑这些用例，退出码是门禁结论。
+            python -m qaplat.cli gate --layer "$LAYER" --select tia --base "$BASE"
+          else
+            # 只打印：full / strategy / selected / reason，不跑 pytest。
+            python -m qaplat.cli tia select --base "$BASE"
+          fi
+
+      - name: 上传索引与标记
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tia-coverage
+          # 下一次手动跑可以下载这份，跳过 3 分钟采集（前提是 HEAD 没变）。
+          path: |
+            .tia-coverage
+            .tia-coverage.head
+          retention-days: 7

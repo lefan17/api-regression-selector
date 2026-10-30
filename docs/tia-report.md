@@ -11,12 +11,14 @@
 
 | 文件 | 行数 | 作用 |
 |---|---|---|
-| `qaplat/tia.py` | 766 | 选择器核心：v1 文件级 + v2 行级（coverage-context） |
-| `qaplat/cli.py` | +159/−1 | `tia select` 子命令；`gate --select tia`（默认关闭） |
+| `qaplat/tia.py` | 893 / 766 行代码 | 选择器核心：v1 文件级 + v2 行级（coverage-context）+ 索引新鲜度 |
+| `qaplat/cli.py` | +199/−1 | `tia select` / `tia capture` 子命令；`gate --select tia`（默认关闭） |
 | `qaplat/_dump.py` | +11 | 采集插件加 `trylast=True`，修正分层分母与跨层选中 |
-| `testcases/platform/test_tia.py` | 741 / 53 条 | 覆盖 v1/v2 共 16 个分支，`qaplat/tia.py` 行覆盖 90% |
-| `docs/tia-plan.md` | 199 | 契约基准：接口、CLI、验收数字、不做什么 |
+| `testcases/platform/test_tia.py` | 900 / 61 条 | 覆盖 v1/v2 共 16 个分支 + 索引新鲜度 8 条，`qaplat/tia.py` 行覆盖 90% |
+| `.github/workflows/tia.yml` | 96 | 仅 `workflow_dispatch`：采集 → capture → 选择，不进 PR 门 |
+| `docs/tia-plan.md` | 210 | 契约基准：接口、CLI、验收数字、不做什么 |
 | `docs/TIA完全入门.md` | 2057 | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
+| `docs/tia-review.md` | 214 | 独立核验记录：5 条判据判决、13 项问题处理、核验方明确没验的部分 |
 
 ## 核心数字
 
@@ -98,6 +100,13 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 
 这是**建索引**，不是跑测试——它顺带把结果跑一遍，产出 `.tia-coverage`。
 
+采完**立刻**记一次 HEAD，否则后面判断不了新颖度：
+
+```bash
+"$VENV" -m qaplat.cli tia capture --coverage-data .tia-coverage
+# → [qaplat] tia capture: HEAD=875e14a90fdc → .tia-coverage.head
+```
+
 ### 2. 看这次改动会影响哪些用例（不跑测试）
 
 ```bash
@@ -121,6 +130,32 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 
 **不给 `--select` 时行为与改造前逐字一致。**
 
+## 索引新鲜度：漏跑的唯一来源
+
+行级 TIA 的准确率上限由**索引新鲜度**决定，不是由选择算法决定。漏检实验里旧索引下漏检 3/7，
+那 3 条全部来自采集之后才新增的 `test_tia.py`——索引里根本没有这份测试的实测数据。
+
+这个失效**不报错**：选择器照常返回一个更小的集合，只是悄悄少了几条。所以做了两件事：
+
+1. **`tia capture`**：采集后把 HEAD 记进 `.tia-coverage.head`（JSON：`head` / `captured_at` / `coverage_file`）。
+   不塞进 SQLite，因为那是 coverage 自己的 schema，`combine` 时可能被重写。
+2. **`tia select` / `gate --select tia` 自动比对**：落后就在 stderr 警告，并给出「落后 N 个提交」，
+   但**不改变退出码、也不改选择结果**——新鲜度是旁路提示，它自己坏掉不该让一次选择失败。
+
+实测三种状态：
+
+| 状态 | 行为 |
+|---|---|
+| 与 HEAD 同步 | 沉默（不打扰） |
+| 索引落后 3 个提交 | 警告：`索引落后：采集于 c62af9d74103，当前 HEAD 875e14a90fdc，中间有 3 个提交未被覆盖 —— 这些提交里新增的测试不会被选中` |
+| 没有 `.head` 标记 | 沉默（「不知道」与「同步」必须分开：每次都喊「不知道」会把人训练成无视警告） |
+
+**为什么不自动重采**：重采要 140–190s，且只有「改了测试代码」时才必要。自动重采会让一次
+`tia select` 从 6 秒变成 3 分钟，结果是没人再用它。正确做法是让人看到警告后自己决定。
+
+`.tia-coverage.head` 必须被 `.gitignore` 忽略（现在是 `.tia-coverage*`）：它一旦被
+`git ls-files --others` 当成新增文件，每次选择都会判「影响面未知 → 全量」，行级选择直接失效。
+
 ## 什么时候会退回全量（这是设计，不是失败）
 
 | 情形 | 判据 | 为什么保守 |
@@ -138,6 +173,9 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 1. **行级粒度的固有取舍**：同一文件里部分行命中时按命中行选，不因「另有几行没人执行」而升全量。收紧要加显式开关（v3）。
 2. **路径字面量方案对 `mock_server/**` 失效**：路由写 `@router.get("/readyz")`，完整前缀在 `mock_server/app.py:50` 的 `include_router(prefix=API_PREFIX)` 里拼。实测 `registry.read_referenced_paths("mock_server/routers.py")` 返回 **0 条**，所以 v1 对被测源码必然退化全量——这正是 v2 改用 coverage-context 的原因。
 3. **索引陈旧**：新增测试文件不在旧索引里，永远不会被选中。必须重采（见「建索引」）。
+   采集后跑一次 `python -m qaplat.cli tia capture --coverage-data .tia-coverage` 会把当前 HEAD
+   记进 `.tia-coverage.head`；之后 `tia select` 若发现索引落后，会直接在 stderr 警告并给出
+   「落后 N 个提交」。**它只警告、不自动重采**——重采要 140–190s，该不该跑得由人决定。
 4. **不挂覆盖率门**：`qaplat gate` 的 pytest 命令行本来就不带 `--cov`，所以 tia 模式不会撞 `--cov-fail-under=54`。覆盖率门在 CI 的独立 job 里跑全量。
 5. **临时目录污染**（已修）：pytest 的 `tmpdir` 会在仓库根留 `tmp<随机>`，被 `git ls-files --others` 当成变更 → 全量兜底。`.gitignore` 已加 `/tmp*` 与 `/qaplat-collect-*/`。
 
@@ -153,9 +191,10 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 
 | 项 | 结果 |
 |---|---|
-| `testcases/platform/test_tia.py` | 53 passed |
+| `testcases/platform/test_tia.py` | **61 passed**（含索引新鲜度 8 条） |
 | `-m platform` | 3 failed（基线）, 286 passed, 400 deselected |
 | `qaplat/tia.py` 行覆盖 | 90%（267 stmts / 27 miss；未覆盖的主要是 `_run_git` 的真 git 调用、CLI 接线，以及 `select` / `select_by_lines` 里「未命中任何用例 → 全量」的两条算法兜底分支，`qaplat/tia.py:553` 与 `:671`） |
-| `ruff check` / `format --check` | 通过 |
+| `ruff check` / `format --check` | 通过（163 files formatted） |
 | 全仓 `mypy` | 122 文件 0 issue |
 | 上游仓零改动 | `dfc9fe6` dirty 0 |
+| 索引新鲜度 | 实测三种状态：同步=沉默、落后 3 个提交=警告、无标记=沉默 |

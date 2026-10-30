@@ -227,6 +227,7 @@ def _tia_extra(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None
     from qaplat import tia
 
     sel = tia.select_from_git(base=args.base, pytest_args=_layer_collect_args(spec), data_path=data_path)
+    _warn_if_index_stale(data_path)
     print(
         f"[qaplat] tia: selected={len(sel.node_ids)}/{sel.total_cases} "
         f"(ratio={sel.ratio:.1%}) full={sel.full} strategy={sel.strategy} reason={sel.reason}",
@@ -235,6 +236,26 @@ def _tia_extra(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None
     if sel.full:
         return list(args.passthrough)
     return list(sel.node_ids) + list(args.passthrough)
+
+
+def _warn_if_index_stale(data_path: Path | None) -> None:
+    """索引落后于当前 HEAD 时在 stderr 提醒一次；**不改变退出码，也不改选择结果**。
+
+    只在真能判断出「落后」时说话：没有标记文件就保持沉默——每次 select 都输出一句
+    「不知道」会把人训练成无视警告。而一旦落后就必须说，因为这类失效**不报错**：
+    选择器照常返回一个更小的集合，只是悄悄少了几条用例。
+    """
+    if data_path is None:
+        return
+    from qaplat import tia
+
+    try:
+        stale, message = tia.index_staleness(data_path)
+    except Exception:  # 旁路提示自己坏掉，不该让一次选择失败
+        return
+    if stale:
+        print(f"[qaplat] 警告: {message}", file=sys.stderr)
+        print("[qaplat] 提示: 重采覆盖率后跑 `tia capture`，可让索引重新对齐 HEAD", file=sys.stderr)
 
 
 def cmd_tia_select(args: argparse.Namespace) -> int:
@@ -257,7 +278,31 @@ def cmd_tia_select(args: argparse.Namespace) -> int:
     except Exception as exc:  # git / pytest 子进程的失败模式是开放的，统一折成用法错误
         print(f"[qaplat] tia 选择失败：{exc}", file=sys.stderr)
         return EXIT_USAGE
+    _warn_if_index_stale(data_path)
     print(tia.render_json(sel) if args.json else tia.render_text(sel))
+    return 0
+
+
+def cmd_tia_capture(args: argparse.Namespace) -> int:
+    """把当前 HEAD 记到索引旁边，供下次 ``tia select`` 判断新鲜度。
+
+    只写标记、不跑采集：采集本身要 140–190s，交给调用方（CI 或本地脚本）决定怎么跑。
+    覆盖率数据文件不存在时返回 2——在这里静默通过，等于让人以为索引是新鲜的。
+    """
+    from qaplat import tia
+
+    data_path = Path(args.coverage_data)
+    if not data_path.is_file():
+        print(f"[qaplat] tia capture: 覆盖率数据不存在：{data_path}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        marker = tia.write_index_head(data_path)
+    except RuntimeError as exc:
+        print(f"[qaplat] tia capture: 写 HEAD 标记失败：{exc}", file=sys.stderr)
+        return EXIT_USAGE
+    payload = tia.read_index_head(data_path) or {}
+    head = payload.get("head", "")
+    print(f"[qaplat] tia capture: HEAD={head[:12]} → {marker}")
     return 0
 
 
@@ -571,6 +616,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="per-test 覆盖率数据（.coverage 文件）；给了就走行级 TIA，不给退回文件级",
     )
     p_tia_select.set_defaults(func=cmd_tia_select)
+    p_tia_capture = tia_sub.add_parser(
+        "capture",
+        help="采集后记录 HEAD，让 tia select 能判断索引是否过期（不跑 pytest，只写标记）",
+    )
+    p_tia_capture.add_argument(
+        "--coverage-data",
+        default=".tia-coverage",
+        metavar="PATH",
+        help="刚采集出的覆盖率数据文件（默认 .tia-coverage），HEAD 会记到它旁边的 <PATH>.head",
+    )
+    p_tia_capture.set_defaults(func=cmd_tia_capture)
     p_tia.set_defaults(func=_help_handler(p_tia))
 
     return parser

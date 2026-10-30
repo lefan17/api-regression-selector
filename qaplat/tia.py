@@ -35,6 +35,7 @@ import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from qaplat import registry
@@ -764,3 +765,94 @@ def render_json(sel: Selection) -> str:
         "node_ids": list(sel.node_ids),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+# --------------------------------------------------------------------------- 索引新鲜度
+
+#: 索引旁路标记文件的后缀：``.tia-coverage`` → ``.tia-coverage.head``。
+#:
+#: 不把 HEAD 塞进 SQLite 里：那是 coverage 自己的 schema，加行要跟着它的版本走，还可能在
+#: ``combine`` 时被重写。单独一个 JSON 旁路文件更稳——写坏了最多是「判断不出新鲜度」，
+#: 不会让索引本身读不出来。
+HEAD_MARKER_SUFFIX = ".head"
+
+
+def head_marker_path(data_path: Path) -> Path:
+    """``.tia-coverage`` → ``.tia-coverage.head``（只加后缀，不改目录）。"""
+    path = Path(data_path)
+    return path.with_name(path.name + HEAD_MARKER_SUFFIX)
+
+
+def write_index_head(data_path: Path, *, cwd: Path | None = None) -> Path:
+    """把**采集时**的 HEAD 记到索引旁边的标记文件里，返回该文件路径。
+
+    为什么需要它：行级 TIA 的准确率上限由**索引新鲜度**决定，不是由选择算法决定。
+    ``qaplat/registry.py:70`` 的漏检实验里，旧索引下漏检 3/7 —— 那 3 条是采集之后才新增的
+    ``testcases/platform/test_tia.py``，索引里根本没有这份测试的实测数据。而这类失效
+    **不会报错**：选择器照常返回一个更小的集合，只是悄悄少了几条。
+
+    记下 HEAD 之后，:func:`index_staleness` 才有对照物；不记就只能靠人记得上次采集是什么
+    时候。采集脚本应当在 ``pytest --cov-context=test`` 跑完之后立刻调一次。
+    """
+    workdir = Path(cwd) if cwd is not None else Path.cwd()
+    head = _run_git(["rev-parse", "HEAD"], workdir).strip()
+    payload = {
+        "head": head,
+        "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "coverage_file": Path(data_path).name,
+    }
+    marker = head_marker_path(data_path)
+    # newline="\n"：本仓是 LF 仓库，别让 Windows 默认换行翻译把标记文件写成 CRLF。
+    with marker.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return marker
+
+
+def read_index_head(data_path: Path) -> dict[str, str] | None:
+    """读标记文件；不存在、读不动、内容不是对象，都返回 ``None``（= 新鲜度未知）。"""
+    marker = head_marker_path(data_path)
+    if not marker.is_file():
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {str(key): str(value) for key, value in payload.items()}
+
+
+def index_staleness(data_path: Path, *, cwd: Path | None = None) -> tuple[bool, str]:
+    """判断索引是否落后于当前 HEAD，返回 ``(是否陈旧, 一句人话)``。
+
+    「不知道」和「同步」必须分开返回，因为排查时它们是两件事：
+
+    - 没有标记文件 → ``(False, "未记录采集时的 HEAD")``：不知道，但不阻止使用；
+    - HEAD 相同 → ``(False, "与 HEAD 同步（abcdef123456）")``；
+    - HEAD 不同 → ``(True, "落后 N 个提交")``，N 由 ``git rev-list --count`` 算出——
+      一个数字比一句「可能过期了」有用得多，它能直接回答「这次改动该不该先重采」。
+
+    只读不写、不抛：新鲜度检查是**旁路提示**，它自己坏掉不应该让 `tia select` 失败。
+    """
+    payload = read_index_head(data_path)
+    if payload is None:
+        return False, "索引未记录采集时的 HEAD（无法判断新鲜度；采集后调 write_index_head 即可）"
+    captured = payload.get("head", "").strip()
+    if not captured:
+        return False, "索引标记里没有 head 字段（无法判断新鲜度）"
+    workdir = Path(cwd) if cwd is not None else Path.cwd()
+    try:
+        current = _run_git(["rev-parse", "HEAD"], workdir).strip()
+    except RuntimeError as exc:
+        return False, f"读不到当前 HEAD，无法判断索引新鲜度：{exc}"
+    if captured == current:
+        return False, f"索引与 HEAD 同步（{current[:12]}）"
+    behind = "?"
+    try:
+        behind = _run_git(["rev-list", "--count", f"{captured}..{current}"], workdir).strip()
+    except RuntimeError:
+        pass
+    return True, (
+        f"索引落后：采集于 {captured[:12]}，当前 HEAD {current[:12]}，"
+        f"中间有 {behind} 个提交未被覆盖 —— 这些提交里新增的测试不会被选中"
+    )
