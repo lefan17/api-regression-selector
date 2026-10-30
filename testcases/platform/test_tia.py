@@ -1,0 +1,741 @@
+"""TIA 选择器的纯函数契约与行级覆盖映射（`qaplat/tia.py`）。
+
+为什么这些用例必须存在
+----------------------
+「宁可多跑，不可漏跑」是 TIA 唯一的设计取向（`docs/tia-plan.md` §3）。这条取向被破坏时
+**不会报错**：它会安静地少选一批用例，让门禁绿着放行一次回归——比崩溃糟得多，因为它是
+静默的。所以下面每条用例都钉「兜底方向」：凡是「影响面说不清」的分支（关键文件、空变更、
+提取不到路径、没人执行过的行、import 期执行的模块级行），断言一律是 `full=True`，
+而不是「选了个小集合也说得过去」。
+
+口径与实现对齐（对着 `qaplat/tia.py` 现有代码写，不按设计稿猜）
+--------------------------------------------------------------
+1. `mock_server/routers.py` 的路由写成 `@router.get("/healthz")` 子路径，`/api/v1` 前缀在
+   `mock_server/app.py` 的 `include_router(prefix=...)` 里拼，所以
+   `registry.read_referenced_paths("mock_server/routers.py")` 返回**空元组** → v1 对它只能
+   全量。第③级（接口路径交集）因此必须靠 `path_reader=` 注入替身来测，否则「命中路径」
+   那条分支永远走不到；本文件里这类替身一旦被误调用就直接抛 AssertionError。
+2. `testcases/platform/**` 在 `registry.is_platform_self_test()` 里被排除，本文件的用例
+   一律构造 `CaseInfo` 直接传参（不依赖磁盘上的真实用例集，否则断言会随用例库膨胀而漂移）。
+3. 行级索引（v2）优先用 `tmp_path` 里自造的 `.coverage`（`coverage.CoverageData` 写真实
+   sqlite，`set_context()` 决定每个 context 的行归属）；只有一条集成用例读仓库根真实的
+   `.coverage.tia`（602 条用例、117 个文件），它不存在就 skip——不能因为「数据没采到」
+   让平台层单测变红。
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from collections.abc import Sequence
+from pathlib import Path
+
+import pytest
+from coverage import CoverageData
+
+from qaplat import registry, tia
+
+pytestmark = pytest.mark.platform
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+#: 仓库根的真实行级覆盖数据（仓库根 `.coverage.tia`，602 条用例采集，117 个被测文件）。
+REAL_COVERAGE = REPO_ROOT / ".coverage.tia"
+
+TEST_FILE = "testcases/api/test_login_contract.py"
+OTHER_TEST_FILE = "testcases/platform/test_gate_layers.py"
+NODE_A = f"{TEST_FILE}::test_lc01_login_success"
+NODE_B = f"{TEST_FILE}::test_lc02_login_failed"
+NODE_C = f"{OTHER_TEST_FILE}::test_layered_gate_expressions"
+
+#: 本文件用到的全量用例库：两条同文件、一条异文件，路径归属各不相同。
+#: `CaseInfo` 是 frozen dataclass，模块级共享不会在用例之间串数据。
+CASES: tuple[registry.CaseInfo, ...] = (
+    registry.CaseInfo(node_id=NODE_A, markers=("api",), referenced_paths=("/api/v1/login",), covers=()),
+    registry.CaseInfo(node_id=NODE_B, markers=("api",), referenced_paths=("/api/v1/orders",), covers=()),
+    registry.CaseInfo(node_id=NODE_C, markers=("platform",), referenced_paths=(), covers=()),
+)
+
+
+def _boom(path: str) -> tuple[str, ...]:
+    """注入用的 `path_reader` 替身：被调用即说明走了「不该读源码」的分支。
+
+    比 `lambda path: ()` 更强：后者把「没调用」与「调用了但返回空」混成同一种结果，
+    而这两者走的是**完全不同**的判据（①/② 短路 vs ③ 兜底），必须能区分。
+    """
+    raise AssertionError(f"本用例不应读取源码：{path}")
+
+
+def _build_coverage(
+    data_path: Path,
+    root: Path,
+    groups: Sequence[tuple[str | None, dict[str, set[int]]]],
+) -> Path:
+    """按 `(context, {仓库相对路径: 行号})` 的顺序写一份真实可读的 `.coverage`。
+
+    用 `CoverageData.set_context()` 而不是 README 里的 `add_context`：coverage 7.16 的
+    `CoverageData` 并没有 `add_context` / `add_file`（已 `inspect.signature` 核实），
+    行归属完全由「写之前当前 context 是谁」决定。context 传 `None` 就是空 context，
+    也就是 `--cov-context=test` 采集时「模块导入期执行、不归属任何用例」那一档。
+    """
+    data = CoverageData(str(data_path))
+    for context, files in groups:
+        data.set_context(context)
+        data.add_lines({str(root / relative): lines for relative, lines in files.items()})
+    data.write()
+    return data_path
+
+
+# ---------------------------------------------------------------------------
+# v1：文件级三级保守策略（docs/tia-plan.md §3）
+# ---------------------------------------------------------------------------
+
+
+def test_changed_test_file_selects_only_its_own_cases() -> None:
+    """分支①：变更落在 testcases/ 下 → 只选该文件 nodeid，strategy="files"，且完全不读源码。"""
+    sel = tia.select([TEST_FILE], CASES, path_reader=_boom)
+
+    assert sel.full is False
+    assert sel.strategy == "files"
+    assert sel.node_ids == (NODE_A, NODE_B)
+    assert sel.matched_files == (TEST_FILE,)
+    assert sel.matched_paths == ()
+    assert sel.changed_files == (TEST_FILE,)
+    assert sel.total_cases == 3
+    assert sel.reason == "命中 1 个测试文件、0 条接口路径"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pyproject.toml",
+        "pytest.ini",
+        "conftest.py",
+        "testcases/login/conftest.py",
+    ],
+)
+def test_always_full_names_force_full(path: str) -> None:
+    """分支②：conftest / pytest 配置改的是**所有**用例的运行条件，命中即立刻全量。
+
+    第 4 个参数就是这条用例的重点：`conftest.py` 按 basename 比对而不是按目录前缀，
+    落在 `testcases/login/` 下也照样全量（那个目录的夹具同样影响整层）。
+    """
+    sel = tia.select([path, TEST_FILE], CASES, path_reader=_boom)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.total_cases == 3
+    assert sel.matched_files == ()
+    assert sel.matched_paths == ()
+    assert sel.changed_files == tuple(sorted({path, TEST_FILE}))
+    assert sel.reason == f"关键文件 {path} 命中必跑清单（改动影响所有用例），退化为全量"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "qaplat/gate.py",
+        "data/x.json",
+        "docs/openapi.json",
+        "requirements.txt",
+        "requirements.lock",
+        "scripts/report_to_zentao.py",
+        "schemas/order.json",
+        "traffic-replay/replay/model.py",
+    ],
+)
+def test_always_full_prefixes_force_full(path: str) -> None:
+    """分支③：关键目录/文件前缀命中即全量（§3.1 清单；一个前缀覆盖任意深度）。"""
+    sel = tia.select([path], CASES, path_reader=_boom)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.changed_files == (path,)
+    assert sel.reason == f"关键文件 {path} 命中必跑清单（改动影响所有用例），退化为全量"
+
+
+def test_always_full_lists_are_stable_and_v2_drops_qaplat() -> None:
+    """两份清单本身是契约：v1 稳定排序；v2 刻意去掉 `qaplat/`（平台层是行级映射最准的地方）。
+
+    这条断言的是「两档策略的**唯一**刻意差异」，它退化（有人把 `qaplat/` 加回行级清单）
+    时，`qaplat tia` 对平台层源码的收益会默默变回 0，而不会有任何用例变红。
+    """
+    assert tia.ALWAYS_FULL_PREFIXES == tuple(sorted(tia.ALWAYS_FULL_PREFIXES))
+    assert "qaplat/" in tia.ALWAYS_FULL_PREFIXES
+    assert tia.ALWAYS_FULL_NAMES == frozenset({"conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg"})
+    assert tia._LINES_FULL_PREFIXES == tuple(prefix for prefix in tia.ALWAYS_FULL_PREFIXES if prefix != "qaplat/")
+    assert "qaplat/" not in tia._LINES_FULL_PREFIXES
+
+
+def test_injected_path_reader_selects_referencing_cases() -> None:
+    """分支④：v1 第③级——变更源码提取到 `/api` 路径，只选引用它的用例。
+
+    这是「路径交集」逻辑唯一的可测入口：真实 `mock_server/routers.py` 提取不出路径
+    （前缀在 app.py 拼），不注入替身就永远进不到这个分支。
+    """
+    sel = tia.select(["mock_server/services.py"], CASES, path_reader=lambda _path: ("/api/v1/login",))
+
+    assert sel.full is False
+    assert sel.strategy == "files"
+    assert sel.node_ids == (NODE_A,)
+    assert sel.matched_files == ()
+    assert sel.matched_paths == ("/api/v1/login",)
+    assert sel.changed_files == ("mock_server/services.py",)
+    assert sel.reason == "命中 0 个测试文件、1 条接口路径"
+
+
+def test_placeholder_parameters_are_normalized_before_intersection() -> None:
+    """第③级比较前要先归一化：`{material_code}` 与 `{code}` 指向同一个 operation。
+
+    不归一化的话，改路由实现时用例明明引用了同一接口却匹配不上 → 静默漏选。
+    """
+    cases = (
+        registry.CaseInfo(
+            node_id="testcases/api/test_materials.py::test_get_material",
+            markers=("api",),
+            referenced_paths=("/api/v1/materials/{material_code}",),
+            covers=(),
+        ),
+    )
+    sel = tia.select(["mock_server/services.py"], cases, path_reader=lambda _path: ("/api/v1/materials/{code}",))
+
+    assert sel.full is False
+    assert sel.node_ids == ("testcases/api/test_materials.py::test_get_material",)
+    assert sel.matched_paths == ("/api/v1/materials/{}",)
+
+
+def test_paths_without_any_referencing_case_fall_back_to_full() -> None:
+    """分支⑤：提取到了路径，但没有任何用例引用它（有代码没人测）→ 全量兜底。"""
+    sel = tia.select(["mock_server/services.py"], CASES, path_reader=lambda _path: ("/api/v1/unknown",))
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.changed_files == ("mock_server/services.py",)
+    assert sel.reason == "mock_server/services.py 提取到 1 条接口路径，但没有任何用例引用它们，退化为全量"
+
+
+def test_real_source_module_without_path_literals_falls_back_to_full() -> None:
+    """分支⑥：真实的 `mock_server/services.py` 里没有 `/api` 字面量 → 全量兜底。
+
+    第一行是**前提断言**：它红掉说明「这个文件现在有路径字面量了」，该换一个纯业务模块
+    来做场景，而不是放宽 `select` 的判据。
+    """
+    source = "mock_server/services.py"
+    assert registry.read_referenced_paths(REPO_ROOT / source) == ()
+
+    sel = tia.select([source], CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.reason == (
+        "mock_server/services.py 未提取到 /api 路径字面量（公共模块/动态拼接/非源码），无法判定影响面，退化为全量"
+    )
+
+
+@pytest.mark.parametrize("changed", [(), ("",), ("   ",), ("./",)])
+def test_no_changed_files_falls_back_to_full(changed: tuple[str, ...]) -> None:
+    """分支⑦：变更集为空（含归一化后变空的写法）→ 全量，绝不返回「什么都不用跑」。"""
+    sel = tia.select(changed, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.changed_files == ()
+    assert sel.total_cases == 3
+    assert sel.reason == "没有变更文件，无法判定影响面，按全量兜底"
+
+
+def test_v1_test_file_without_collected_cases_falls_back_to_full() -> None:
+    """第②级的失败侧：在 testcases/ 下但一条用例都没有（已删除/改名）→ 全量。
+
+    若这里静默返回空选择，删掉一个测试文件就等于「这次不用跑任何用例」。
+    """
+    sel = tia.select(["testcases/api/test_deleted.py"], CASES, path_reader=_boom)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert (
+        sel.reason
+        == "testcases/api/test_deleted.py 在 testcases/ 下但没有任何已收集用例（可能已删除或改名），退化为全量"
+    )
+
+
+def test_backslash_and_dot_slash_paths_are_normalized() -> None:
+    """路径归一化：Windows 反斜杠、`./` 前缀、仓库绝对路径都要落到同一个仓库相对写法。
+
+    三者只要有一种没对上，`testcases/` 下的变更就会被当成「其他源码」去读字面量，
+    TIA 收益最大的一档直接失效。
+    """
+    mixed = tia.select(
+        ["testcases\\api\\test_login_contract.py", "./testcases/api/test_login_contract.py"],
+        CASES,
+        path_reader=_boom,
+    )
+    assert mixed.changed_files == (TEST_FILE,)
+    assert mixed.node_ids == (NODE_A, NODE_B)
+
+    absolute = tia.select([str(REPO_ROOT / "testcases" / "api" / "test_login_contract.py")], CASES, path_reader=_boom)
+    assert absolute.changed_files == (TEST_FILE,)
+    assert absolute.node_ids == (NODE_A, NODE_B)
+
+
+def test_selection_ratio_handles_zero_total_cases() -> None:
+    """分支⑧：`total_cases == 0` 时 ratio 返回 0.0，不抛 ZeroDivisionError（也覆盖负数）。"""
+    empty = tia.Selection(
+        node_ids=(),
+        full=True,
+        reason="用例库为空",
+        changed_files=(),
+        total_cases=0,
+        matched_files=(),
+        matched_paths=(),
+    )
+    assert empty.ratio == 0.0
+
+    negative = tia.Selection(
+        node_ids=(NODE_A,),
+        full=False,
+        reason="用例库计数异常",
+        changed_files=(TEST_FILE,),
+        total_cases=-3,
+        matched_files=(TEST_FILE,),
+        matched_paths=(),
+    )
+    assert negative.ratio == 0.0
+
+    quarter = tia.Selection(
+        node_ids=(NODE_A, NODE_B),
+        full=False,
+        reason="正常情况",
+        changed_files=(TEST_FILE,),
+        total_cases=8,
+        matched_files=(TEST_FILE,),
+        matched_paths=(),
+    )
+    assert quarter.ratio == 0.25
+
+
+def test_render_json_matches_the_documented_contract() -> None:
+    """分支⑨：`render_json` 的键集合与取值是 CI 解析契约（§4.1），改名/漏键都算破坏契约。"""
+    contract_keys = {
+        "full",
+        "strategy",
+        "reason",
+        "total_cases",
+        "selected",
+        "ratio",
+        "changed_files",
+        "matched_files",
+        "matched_paths",
+        "node_ids",
+    }
+
+    partial = json.loads(tia.render_json(tia.select([TEST_FILE], CASES, path_reader=_boom)))
+    assert set(partial) == contract_keys
+    assert partial["full"] is False
+    assert partial["strategy"] == "files"
+    assert partial["total_cases"] == 3
+    assert partial["selected"] == 2
+    assert partial["ratio"] == 0.6667
+    assert partial["node_ids"] == [NODE_A, NODE_B]
+    assert partial["changed_files"] == [TEST_FILE]
+    assert partial["matched_files"] == [TEST_FILE]
+    assert partial["matched_paths"] == []
+
+    whole = json.loads(tia.render_json(tia.select([], CASES)))
+    assert set(whole) == contract_keys
+    assert whole["full"] is True
+    assert whole["strategy"] == "full"
+    assert whole["selected"] == 0
+    assert whole["ratio"] == 0.0
+    assert whole["node_ids"] == []
+    assert whole["changed_files"] == []
+
+
+def test_node_ids_are_sorted_regardless_of_case_input_order() -> None:
+    """分支⑩：`cases` 的输入顺序不得影响输出——nodeid 必须字典序，否则报表与 diff 抖动。"""
+    forward = tia.select([TEST_FILE], CASES, path_reader=_boom)
+    reversed_cases = tia.select([TEST_FILE], list(reversed(CASES)), path_reader=_boom)
+    shuffled = tia.select([TEST_FILE], [CASES[1], CASES[2], CASES[0]], path_reader=_boom)
+
+    assert forward.node_ids == (NODE_A, NODE_B)
+    assert reversed_cases.node_ids == forward.node_ids
+    assert shuffled.node_ids == forward.node_ids
+
+
+def test_new_lines_from_diff_parses_unified_zero_context_hunks() -> None:
+    """`git diff -U0` 的 hunk 头解析：省略行数按 1 算，`d == 0`（纯删除）不编造目标行。
+
+    纯删除编行号会去命中「删除位置之后的那行」，属于把影响面猜小了。
+    """
+    patch = (
+        "@@ -10,0 +11,2 @@ def create_order():\n"
+        "+    total = 0\n"
+        "+    return total\n"
+        "@@ -20 +25 @@ def other():\n"
+        "+    pass\n"
+        "@@ -30,3 +31,0 @@ def removed():\n"
+        "-    gone\n"
+    )
+
+    assert tia._new_lines_from_diff(patch) == {11, 12, 25}
+
+
+def test_git_failure_raises_instead_of_returning_an_empty_change_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """git 读不到变更时必须抛错：返回空元组会被上层读成「本次没有变更，一条用例都不用跑」。
+
+    这是 TIA 最危险的失效模式（git 不在 PATH / base 写错 / 不在仓库里 / 权限问题），所以
+    断言不只是「抛了异常」，而是异常里必须带命令、cwd、退出码与两路输出的尾部——否则排障
+    时要靠猜。替身换掉 `subprocess.run`，不依赖本机真的处于某个 git 状态。
+    """
+    fake = subprocess.CompletedProcess(args=["git"], returncode=128, stdout="", stderr="fatal: not a git repository\n")
+    monkeypatch.setattr(tia.subprocess, "run", lambda *_args, **_kwargs: fake)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        tia.changed_files(cwd=tmp_path)
+
+    message = str(excinfo.value)
+    assert "git 读取变更失败" in message
+    assert "returncode: 128" in message
+    assert "fatal: not a git repository" in message
+    assert str(tmp_path) in message
+    assert "（空）" in message  # stdout 为空时的显式占位，避免异常里出现一段看不懂的空白
+
+
+@pytest.mark.parametrize(
+    ("exc", "needle"),
+    [
+        (FileNotFoundError(2, "No such file or directory"), "无法执行 git"),
+        (subprocess.TimeoutExpired(cmd="git", timeout=120), "git 超时"),
+    ],
+)
+def test_git_execution_problems_raise_actionable_errors(
+    exc: Exception,
+    needle: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """「执行不了 git」与「git 跑超时」也要变成带上下文的 RuntimeError，而不是静默空变更。"""
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise exc
+
+    monkeypatch.setattr(tia.subprocess, "run", _raise)
+
+    with pytest.raises(RuntimeError, match=needle):
+        tia.changed_files(cwd=tmp_path)
+
+
+def test_render_text_declares_the_known_limits() -> None:
+    """文本输出必须显式声明已知限制（§3.2），否则有人会把文件级粒度读成「万无一失」。"""
+    partial = tia.render_text(tia.select([TEST_FILE], CASES, path_reader=_boom))
+    assert "模式: 部分选择（files 策略）" in partial
+    assert "选中: 2 / 3 条用例（66.67%）" in partial
+    assert f"  - {NODE_A}" in partial
+    assert "已知限制: 影响面按文件/行粒度判定" in partial
+
+    whole = tia.render_text(tia.select([], CASES))
+    assert "模式: 全量兜底（full）" in whole
+    assert "选中: 0 / 3 条用例（0.00%）" in whole
+    assert "用例:" not in whole
+
+
+# ---------------------------------------------------------------------------
+# v2：行级覆盖映射
+# ---------------------------------------------------------------------------
+
+
+def test_load_context_index_normalizes_paths_and_strips_stage_suffix(tmp_path: Path) -> None:
+    """分支⑪：`.coverage` → 「仓库相对路径 → {行: (nodeid,)}」，后缀剥离、路径归一化。
+
+    三种 context 形态一起写：`|run`（用例体）、`|setup`（夹具执行到该行，同样算命中）、
+    以及第二个文件上的 `|run`。断言的是索引的**形状**，不是它有多少条。
+    """
+    root = tmp_path / "clone"
+    (root / "mock_server").mkdir(parents=True)
+    (root / "qaplat").mkdir()
+    data = _build_coverage(
+        tmp_path / ".coverage",
+        root,
+        [
+            (f"{TEST_FILE}::test_lc01_login_success|run", {"mock_server/services.py": {10, 11}}),
+            (f"{TEST_FILE}::test_lc01_login_success|setup", {"mock_server/services.py": {3}}),
+            ("testcases/mes/test_order_flow.py::test_create|run", {"qaplat/gate.py": {7}}),
+        ],
+    )
+
+    index = tia.load_context_index(data, root=root)
+
+    assert sorted(index) == ["mock_server/services.py", "qaplat/gate.py"]
+    services = index["mock_server/services.py"]
+    assert sorted(services) == [3, 10, 11]
+    assert services[10] == (f"{TEST_FILE}::test_lc01_login_success",)
+    assert services[3] == (f"{TEST_FILE}::test_lc01_login_success",)
+    assert index["qaplat/gate.py"] == {7: ("testcases/mes/test_order_flow.py::test_create",)}
+
+
+def test_context_suffix_pipeline_keeps_parameterized_ids_and_drops_dynamic_contexts(tmp_path: Path) -> None:
+    """`|` 只在后缀确实属于 run/setup/teardown 时才切，其余 context 一律丢弃。
+
+    * `test_pair[a|b]|run`：参数化 id 自带 `|`，无条件 `split("|")[0]` 会切坏它；
+    * `test_pair[a|b]`（裸 nodeid）：没有阶段后缀也认，别把独有用例的归因搞丢；
+    * `zeta`（`--cov-context=dynamic` 的裸标签）：不是用例，留着只会污染命中集合；
+    * `|run`（只有阶段没有 nodeid）：head 为空，丢弃。
+    """
+    root = tmp_path / "clone"
+    root.mkdir()
+    data = _build_coverage(
+        tmp_path / ".coverage",
+        root,
+        [
+            ("testcases/api/test_param.py::test_pair[a|b]|run", {"apis/user_api.py": {5}}),
+            ("testcases/api/test_param.py::test_pair[a|b]", {"apis/user_api.py": {7}}),
+            ("zeta", {"apis/user_api.py": {6}}),
+            ("|run", {"apis/user_api.py": {8}}),
+        ],
+    )
+
+    per_line = tia.load_context_index(data, root=root)["apis/user_api.py"]
+
+    assert per_line[5] == ("testcases/api/test_param.py::test_pair[a|b]",)
+    assert per_line[7] == ("testcases/api/test_param.py::test_pair[a|b]",)
+    assert 6 not in per_line
+    assert 8 not in per_line
+
+
+def test_files_outside_root_are_skipped_not_fatal(tmp_path: Path) -> None:
+    """仓库外的文件（site-packages / 别的仓）跳过即可，不该让整份索引读不出来。"""
+    root = tmp_path / "clone"
+    root.mkdir()
+    inside = root / "apis" / "user_api.py"
+    outside = tmp_path / "elsewhere" / "lib.py"
+    outside.parent.mkdir()
+    data = CoverageData(str(tmp_path / ".coverage"))
+    data.set_context("testcases/api/test_a.py::test_a|run")
+    data.add_lines({str(inside): {3}, str(outside): {4}})
+    data.write()
+
+    assert sorted(tia.load_context_index(tmp_path / ".coverage", root=root)) == ["apis/user_api.py"]
+
+
+def test_module_level_line_forces_full(tmp_path: Path) -> None:
+    """分支⑫：变更行带空 context（import 期执行）→ 全量，reason 点名「模块级代码」。
+
+    这类行不归属任何用例，但它一改，所有 import 该模块的用例的运行条件都变了。
+    从真实的 `.coverage` 一路读到 `select_by_lines`，验的是整条链。
+    """
+    root = tmp_path / "clone"
+    root.mkdir()
+    data = _build_coverage(tmp_path / ".coverage", root, [(None, {"mock_server/services.py": {1, 2}})])
+    index = tia.load_context_index(data, root=root)
+
+    assert index["mock_server/services.py"][1] == (tia._MODULE_LEVEL,)
+
+    sel = tia.select_by_lines([tia.ChangedHunk("mock_server/services.py", (2,))], index, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.changed_files == ("mock_server/services.py",)
+    assert "第 2 行属于模块级代码" in sel.reason
+    assert "import 期执行、不归属任何用例" in sel.reason
+
+
+def test_executed_lines_select_their_cases_in_lines_strategy() -> None:
+    """分支⑬：变更行被某用例执行过 → full=False、strategy="lines"、node_ids 恰为索引里那些。
+
+    索引里还塞了一条「本次没收集到」的 nodeid（用例已被删除）：它必须被过滤掉，
+    否则 CLI 会把一个 pytest 认不出的 nodeid 拼进命令行，整层直接报 usage error。
+    """
+    index = {
+        "mock_server/services.py": {
+            10: (NODE_A,),
+            11: (NODE_B,),
+            12: ("testcases/api/test_removed.py::test_gone",),
+        }
+    }
+
+    sel = tia.select_by_lines([tia.ChangedHunk("mock_server/services.py", (10, 11, 12))], index, CASES)
+
+    assert sel.full is False
+    assert sel.strategy == "lines"
+    assert sel.node_ids == (NODE_A, NODE_B)
+    assert sel.matched_files == (TEST_FILE,)
+    assert sel.matched_paths == ()
+    assert sel.changed_files == ("mock_server/services.py",)
+    assert sel.reason == "命中 2 条用例（分布在 1 个测试文件、覆盖 3 条变更行）"
+
+
+@pytest.mark.parametrize(
+    ("index", "needle"),
+    [
+        ({"mock_server/services.py": {10: (NODE_A,)}}, "没有被任何已收集用例执行过"),
+        ({}, "不在覆盖索引里"),
+        (
+            {"mock_server/services.py": {10: ("testcases/api/test_removed.py::test_gone",)}},
+            "没有被任何已收集用例执行过",
+        ),
+    ],
+)
+def test_unexecuted_changed_lines_fall_back_to_full(
+    index: dict[str, dict[int, tuple[str, ...]]],
+    needle: str,
+) -> None:
+    """分支⑭：变更行没人执行过 / 文件不在索引里 / 只有已删除用例命中 → 三种都全量兜底。
+
+    这是行级策略最危险的失效面：把「没有任何用例执行过这一行」读成「这一行不重要」，
+    就会漏掉「改了控制流、让原本不执行的代码开始执行」这类回归。
+    """
+    sel = tia.select_by_lines([tia.ChangedHunk("mock_server/services.py", (99,))], index, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert needle in sel.reason
+
+
+def test_hunk_without_target_lines_falls_back_to_full() -> None:
+    """分支⑮：`lines=()` 是「文件变了但拿不到目标行」（纯删除/二进制/重命名/未跟踪）→ 全量。"""
+    sel = tia.select_by_lines(
+        [tia.ChangedHunk("mock_server/services.py", ())],
+        {"mock_server/services.py": {10: (NODE_A,)}},
+        CASES,
+    )
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.reason == (
+        "mock_server/services.py 没有可用的新增行（纯删除/二进制/重命名/未跟踪），影响面未知，退化为全量"
+    )
+
+
+def test_testcase_hunk_selects_its_cases_without_touching_coverage() -> None:
+    """分支⑯：行级命中 `testcases/` 下的文件 → 选该文件全部用例，不走覆盖索引。
+
+    索引传空字典就是这条的证明：如果实现去查 coverage，空索引会走成「不在覆盖索引里」的全量。
+    """
+    sel = tia.select_by_lines([tia.ChangedHunk(TEST_FILE, (12,))], {}, CASES)
+
+    assert sel.full is False
+    assert sel.strategy == "lines"
+    assert sel.node_ids == (NODE_A, NODE_B)
+    assert sel.matched_files == (TEST_FILE,)
+    assert sel.matched_paths == ()
+    assert sel.reason == "命中 2 条用例（分布在 1 个测试文件、覆盖 0 条变更行）"
+
+
+@pytest.mark.parametrize(
+    "hunks",
+    [
+        [],
+        [tia.ChangedHunk("", (5,))],
+        [tia.ChangedHunk("./", (5,))],
+    ],
+)
+def test_no_hunks_falls_back_to_full(hunks: list[tia.ChangedHunk]) -> None:
+    """分支⑮的另一半：hunk 列表为空/路径归一化后为空 → 「没有可用的变更行」→ 全量。"""
+    sel = tia.select_by_lines(hunks, {}, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.changed_files == ()
+    assert sel.total_cases == 3
+    assert sel.reason == "没有可用的变更行（diff 为空），无法判定影响面，按全量兜底"
+
+
+def test_qaplat_source_is_line_level_in_v2_but_full_in_v1() -> None:
+    """v2 与 v1 唯一的刻意差异：`qaplat/` 在行级策略里不再判全量。
+
+    平台层恰好是 coverage 覆盖最完整的部分；继续判全量等于自废 v2（改一行报表就跑全仓）。
+    同一个变更文件在两档下必须给出不同的 `strategy`——这条用例就是那个契约。
+    """
+    hunk = tia.ChangedHunk("qaplat/gate.py", (7,))
+    index = {"qaplat/gate.py": {7: (NODE_C,)}}
+
+    by_lines = tia.select_by_lines([hunk], index, CASES)
+    assert by_lines.full is False
+    assert by_lines.strategy == "lines"
+    assert by_lines.node_ids == (NODE_C,)
+    assert by_lines.reason == "命中 1 条用例（分布在 1 个测试文件、覆盖 1 条变更行）"
+
+    by_files = tia.select(["qaplat/gate.py"], CASES, path_reader=_boom)
+    assert by_files.full is True
+    assert by_files.strategy == "full"
+
+
+@pytest.mark.parametrize("path", ["data/x.json", "pytest.ini", "testcases/login/conftest.py"])
+def test_v2_still_treats_config_and_data_as_full(path: str) -> None:
+    """v2 只放开了 `qaplat/`：数据源、配置、任意层级 conftest 依旧是全量。
+
+    这三类改变的是所有用例的输入/运行条件，行级映射解释不了它们的影响面。
+    """
+    sel = tia.select_by_lines([tia.ChangedHunk(path, (3,))], {path: {3: (NODE_A,)}}, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert sel.changed_files == (path,)
+    assert path in sel.reason
+    assert "关键文件" in sel.reason
+
+
+def test_v2_test_file_without_collected_cases_falls_back_to_full() -> None:
+    """v2 第②级的失败侧：testcases/ 下但没有任何已收集用例 → 全量（与 v1 同一条判据）。"""
+    sel = tia.select_by_lines([tia.ChangedHunk("testcases/api/test_deleted.py", (1,))], {}, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert (
+        sel.reason
+        == "testcases/api/test_deleted.py 在 testcases/ 下但没有任何已收集用例（可能已删除或改名），退化为全量"
+    )
+
+
+def test_missing_coverage_file_raises_even_if_it_looks_safe(tmp_path: Path) -> None:
+    """数据缺失必须抛错：返回空索引会把「忘了 `--cov-context=test`」伪装成「都安全」。"""
+    with pytest.raises(RuntimeError, match="coverage 数据文件不存在或不是文件"):
+        tia.load_context_index(tmp_path / "no-such.coverage", root=tmp_path)
+
+
+def test_coverage_without_case_contexts_raises(tmp_path: Path) -> None:
+    """有数据但一条「用例 context」都没有（例如用 dynamic 采集）→ 抛错而不是空字典。"""
+    root = tmp_path / "clone"
+    root.mkdir()
+    data = _build_coverage(tmp_path / ".coverage", root, [("zeta", {"apis/user_api.py": {5}})])
+
+    with pytest.raises(RuntimeError, match="没有可用的「用例 context」"):
+        tia.load_context_index(data, root=root)
+
+
+def test_real_coverage_tia_index_has_the_expected_shape() -> None:
+    """集成：仓库根真实的 `.coverage.tia`（602 条用例的采集）必须能读成 117 个文件的索引。
+
+    文件不存在就 skip：它由 CI 采集、不进 git 必备路径，平台层单测不该因为「本机没采过」
+    而变红。断言 117 是这份数据的固定事实（2026-10 采集），换数据时应当同步更新这条用例。
+    """
+    if not REAL_COVERAGE.is_file():
+        pytest.skip(f"未采集到行级覆盖数据：{REAL_COVERAGE}")
+
+    index = tia.load_context_index(REAL_COVERAGE)
+
+    assert len(index) == 117
+    assert "qaplat/registry.py" in index
+    assert "mock_server/services.py" in index
+    registry_lines = index["qaplat/registry.py"]
+    assert all(isinstance(line, int) for line in registry_lines)
+    assert any(tia._MODULE_LEVEL in node_ids for node_ids in registry_lines.values())
+
+    every_node = {node_id for per_line in index.values() for node_ids in per_line.values() for node_id in node_ids}
+    assert tia._MODULE_LEVEL in every_node
+    assert all(node_id == "" or "::" in node_id for node_id in every_node)
+    assert all(not any(stage in node_id for stage in ("|run", "|setup", "|teardown")) for node_id in every_node)

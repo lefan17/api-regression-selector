@@ -10,7 +10,11 @@
 ``metrics``   恒 0
 ``report``    恒 0
 ``drift``     0 无漂移 / 1 有漂移
+``tia``       恒 0（信息查询）；选择器自身失败（git / 用例收集）才是 2
 ============  ==========================================================
+
+``gate --select tia`` 只跑「受本次改动影响」的用例，**默认关闭**：不给 ``--select`` 时
+行为与引入 TIA 之前逐字一致（全量）。选不出安全子集（``sel.full``）时同样退回全量。
 
 ``--db`` 是全局选项，必须写在子命令之前（``qaplat --db x.db gate --layer smoke``）；
 写在其后被 argparse 当成子命令的未知参数并报用法错误（退出码 2）。
@@ -21,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -118,13 +123,27 @@ def cmd_gate(args: argparse.Namespace) -> int:
     """
     spec = _resolve_layer(args.layer)
     commit = args.commit or _git_sha()
+    # 行级判据（v2）要的覆盖率数据在这里定：显式路径写错时必须**在开库之前**就以用法错误
+    # 退出，不然会留下一个已建表的空库，让人误以为「这轮跑过了」。
+    data_path = _resolve_coverage_data(args.coverage_data) if args.select == "tia" else None
     store = _open_store(args.db)
 
     print(
         f"[qaplat] 层={spec.layer.value} 表达式={spec.marker_expr or '(全量)'} 阈值={spec.min_pass_rate:.0%}",
         flush=True,
     )
-    run = gate.run_layer(spec, args.passthrough)
+    # 默认（args.select is None）就是原来的全量跑法，extra 原样等于 args.passthrough；
+    # ``--select tia`` 才把选中集塞进 extra。extra 在 build_pytest_args 里排在最后，
+    # 所以 nodeid 只是「限定 pytest 的用例范围」，不覆盖 -m 表达式。
+    extra: Sequence[str] = args.passthrough
+    if args.select == "tia":
+        try:
+            extra = _tia_extra(args, spec, data_path)
+        except Exception as exc:  # git / pytest 子进程的失败模式是开放的，统一折成用法错误
+            print(f"[qaplat] tia 选择失败：{exc}", file=sys.stderr)
+            store.close()
+            return EXIT_USAGE
+    run = gate.run_layer(spec, extra)
     record = _record_layer_run(store, spec, run, commit=commit)
     result = gate.evaluate(spec, record)
 
@@ -146,6 +165,100 @@ def cmd_gate(args: argparse.Namespace) -> int:
         print(f"[qaplat] 门禁达标：{spec.layer.value}", flush=True)
     store.close()
     return gate.exit_code_for(result)
+
+
+# --------------------------------------------------------------------------- tia
+#
+# ``tia`` 刻意在函数内部 import：它是后加的模块，写在模块顶部会让 run / gate / metrics /
+# report 全都依赖它的存在，而「不带 ``--select`` 时行为逐字不变」是这一轮的回归红线。
+
+
+def _resolve_coverage_data(arg: str | None) -> Path | None:
+    """决定行级 TIA（v2）用的 per-test 覆盖率数据；``None`` 表示退回文件级（v1）。
+
+    显式给的路径不存在时**报错退出 2**，不静默退回 v1：调用方既然点名了这份数据，悄悄
+    换一套判据只会让人以为行级生效了，然后拿着「文件级选中集」去解释行级效果。
+    没给时才走约定：先 ``.coverage.tia``（``pytest --cov-context=test`` 的产物），再
+    ``.coverage``；两份都没有就返回 ``None``，并明说退化了——否则日志里看不出这次是行级
+    还是文件级。
+    """
+    if arg:
+        path = Path(arg)
+        if not path.exists():
+            print(f"覆盖率数据不存在：{arg}", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        return path
+    for candidate in (ROOT / ".coverage.tia", ROOT / ".coverage"):
+        if candidate.exists():
+            return candidate
+    print("[qaplat] tia: 未找到覆盖率数据，退化为文件级策略", flush=True)
+    return None
+
+
+def _pytest_args_from(value: str) -> list[str]:
+    """把 ``--pytest-args "-m smoke"`` 这一整串切成 argv。
+
+    这里用「一个字符串」而不是 ``nargs=REMAINDER``：``tia select`` 后面没有位置参数，
+    REMAINDER 会把拼错的选项也一并吞进 pytest 参数（静默变成「跑了错的范围」而不是报用法错误）。
+    切分交给 ``shlex``，``-k "login and not slow"`` 这类带空格的值才不会被拆散；
+    代价是反斜杠会按转义处理，Windows 路径请写正斜杠（本仓统一用 ``/``）。
+    """
+    return shlex.split(value) if value else []
+
+
+def _layer_collect_args(spec: LayerSpec) -> list[str]:
+    """层 → 与 ``gate`` 同口径的收集参数（只有 ``-m`` 表达式，不带 dump 插件）。
+
+    tia 的分母必须是「这一层真正会跑的用例」：``gate --layer pr`` 只跑
+    ``-m smoke or api or platform``，若按全量收集，ratio 的分母会虚高，选中集里还会混进
+    该层根本不会执行的用例。
+    """
+    return ["-m", spec.marker_expr] if spec.marker_expr else []
+
+
+def _tia_extra(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None) -> list[str]:
+    """``gate --select tia`` 的 ``extra``：选中 nodeid + 调用方附加参数。
+
+    ``data_path`` 非空就走行级（v2），为空退回文件级（v1）——两条路径共用同一个
+    ``Selection`` 契约，这里不需要分叉。
+    ``sel.full`` 为真时**只**返回原 ``passthrough``：全量兜底的含义是「影响面判定不了」，
+    这时再叠一层 nodeid 过滤等于把兜底又收窄回去。
+    """
+    from qaplat import tia
+
+    sel = tia.select_from_git(base=args.base, pytest_args=_layer_collect_args(spec), data_path=data_path)
+    print(
+        f"[qaplat] tia: selected={len(sel.node_ids)}/{sel.total_cases} "
+        f"(ratio={sel.ratio:.1%}) full={sel.full} strategy={sel.strategy} reason={sel.reason}",
+        flush=True,
+    )
+    if sel.full:
+        return list(args.passthrough)
+    return list(sel.node_ids) + list(args.passthrough)
+
+
+def cmd_tia_select(args: argparse.Namespace) -> int:
+    """打印「本次改动该跑哪些用例」，不跑 pytest。
+
+    恒返回 0：一条都没选中（例如改动全落在没有被任何用例引用的源码上）也是有效结论，
+    选择器会自己给出 ``full`` 与 ``reason``。只有选择器**自身**失败（git 不可用、用例收集
+    崩了）才返回 2——那种情况下的「0 条」是假结论，不能当信息查询的答案返回。
+    """
+    from qaplat import tia
+
+    data_path = _resolve_coverage_data(args.coverage_data)
+    try:
+        sel = tia.select_from_git(
+            base=args.base,
+            pytest_args=_pytest_args_from(args.pytest_args),
+            include_worktree=not args.no_worktree,
+            data_path=data_path,
+        )
+    except Exception as exc:  # git / pytest 子进程的失败模式是开放的，统一折成用法错误
+        print(f"[qaplat] tia 选择失败：{exc}", file=sys.stderr)
+        return EXIT_USAGE
+    print(tia.render_json(sel) if args.json else tia.render_text(sel))
+    return 0
 
 
 # --------------------------------------------------------------------------- registry
@@ -374,6 +487,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_gate = sub.add_parser("gate", help="跑一层并落库，再与阈值比对（0 达标 / 1 未达标 / 2 用法错误）")
     p_gate.add_argument("--layer", required=True, metavar="LAYER", help="smoke | pr | nightly | release")
     p_gate.add_argument("--commit", default=None, metavar="SHA", help="记录用的 commit（默认取当前 HEAD）")
+    p_gate.add_argument(
+        "--select",
+        choices=["tia"],
+        default=None,
+        metavar="MODE",
+        help="只跑受本次改动影响的用例（tia）；不给则跑该层全量（默认关闭）",
+    )
+    p_gate.add_argument(
+        "--base",
+        default="HEAD~1",
+        metavar="REF",
+        help="--select tia 的变更基准（git diff base...HEAD，默认 HEAD~1）",
+    )
+    p_gate.add_argument(
+        "--coverage-data",
+        default=None,
+        metavar="PATH",
+        help="--select tia 用的 per-test 覆盖率数据（.coverage 文件）；给了就走行级，不给退回文件级",
+    )
     p_gate.add_argument("passthrough", nargs=argparse.REMAINDER, help="-- 之后的参数原样传给 pytest")
     p_gate.set_defaults(func=cmd_gate)
 
@@ -415,6 +547,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_drift_rec.add_argument("--script", default=None, metavar="PATH", help="漂移检查脚本路径")
     p_drift_rec.set_defaults(func=cmd_drift_record)
     p_drift.set_defaults(func=_help_handler(p_drift))
+
+    p_tia = sub.add_parser("tia", help="变更 → 用例选择：只挑受本次改动影响的用例")
+    tia_sub = p_tia.add_subparsers(dest="tia_command", metavar="<子命令>")
+    p_tia_select = tia_sub.add_parser("select", help="按 git diff 算出该跑哪些用例（只打印，不跑 pytest）")
+    p_tia_select.add_argument(
+        "--base", default="HEAD~1", metavar="REF", help="变更基准（git diff base...HEAD，默认 HEAD~1）"
+    )
+    p_tia_select.add_argument("--json", action="store_true", help="输出机器可解析的 JSON（字段固定，供 CI 解析）")
+    p_tia_select.add_argument(
+        "--no-worktree", action="store_true", help="只看已提交改动，不把工作区改动与未跟踪文件算进来"
+    )
+    p_tia_select.add_argument(
+        "--pytest-args",
+        default="",
+        metavar="ARGS",
+        help='收集用例时附加的 pytest 参数，整串用引号包住（如 "-m smoke"）',
+    )
+    p_tia_select.add_argument(
+        "--coverage-data",
+        default=None,
+        metavar="PATH",
+        help="per-test 覆盖率数据（.coverage 文件）；给了就走行级 TIA，不给退回文件级",
+    )
+    p_tia_select.set_defaults(func=cmd_tia_select)
+    p_tia.set_defaults(func=_help_handler(p_tia))
 
     return parser
 

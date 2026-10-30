@@ -20,6 +20,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 _STATE: dict[str, Any] = {
     "dump": None,
     "records": {},
@@ -77,7 +79,16 @@ def _qualified_nodeid(item: Any) -> str:
     return f"{path}{nodeid}"
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(session: Any, config: Any, items: list[Any]) -> None:
+    # ``trylast=True`` 不是可选的性能优化，是**正确性**要求：``-m`` 的 deselect 也在
+    # ``pytest_collection_modifyitems`` 里做（``_pytest/mark/__init__.py``），而 ``-p``
+    # 加载的插件注册得晚、默认**先**执行，于是这个 hook 看到的还是「deselect 之前」的
+    # 全量 items —— 带 ``-m smoke`` 收集时 pytest 声称 ``36/689 tests collected``，
+    # 这里却照样写下 689 条 marker。后果不只是 tia 的 ratio 分母偏大（689 而非 36），
+    # 更危险的是 ``collect_cases(['-m', 'smoke'])`` 返回的清单里混着 smoke 层以外的
+    # 用例，``gate --layer smoke --select tia`` 就可能把一条 ``-m api`` 的用例塞进
+    # smoke 那轮的 pytest 命令行。加 trylast 之后 items 是 deselect 后的最终选择。
     for item in items:
         nodeid = _qualified_nodeid(item)
         if nodeid != item.nodeid:
