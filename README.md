@@ -10,6 +10,54 @@
 
 ---
 
+## 本仓新增：变更 → 测试选择（TIA）
+
+上游那套框架回答的是「跑得对不对」，本仓补的是**「改了一行，到底该重跑哪几条」**。
+
+做法：用 `--cov-context=test` 采集「每一行被哪条用例执行过」的索引，再拿 `git diff`
+的新增行号反查受影响的用例。改 `mock_server/routers.py` 一行时：
+
+| 指标 | 全量 `-m "not ui"` | TIA 选中集 |
+|---|---|---|
+| 用例数 | 697 | **1**（0.15%） |
+| 耗时 | 196.55s | **2.21s** |
+
+正确性不靠「看起来对」：把 `normalize_path` 故意改坏后，7 条真红里**旧索引漏检 3 条**
+（那 3 条来自采集之后才新增的测试文件），补采后复算 **0/7**。这个 3/7 也解释了为什么要有
+`tia capture` 与「索引落后」警告——**索引旧了不会报错，它只会悄悄少选几条**。
+
+```bash
+VENV=/path/to/.venv/Scripts/python.exe
+
+# 1. 建索引（改了测试代码或新增测试文件后必须重跑，140–190s）
+COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" --cov=. --cov-context=test --cov-report=
+"$VENV" -m qaplat.cli tia capture --coverage-data .tia-coverage   # 记下采集时的 HEAD
+
+# 2. 看这次改动会影响哪些用例（只打印，不跑测试）
+"$VENV" -m qaplat.cli tia select --base HEAD~1
+"$VENV" -m qaplat.cli tia select --base HEAD~1 --json
+
+# 3. 在门禁里用（默认关闭，必须显式开）
+"$VENV" -m qaplat.cli gate --layer pr --select tia --base origin/main
+```
+
+`--select tia` **默认关闭**：不给这个参数时，行为与改造前逐字一致。CI 上也只挂在
+`workflow_dispatch`（[`.github/workflows/tia.yml`](.github/workflows/tia.yml)）——进 PR 流水门
+之前要先攒真实 diff 分布，看兜底率与误选率；漏跑不会报错，它只会让门禁绿着放行一次回归。
+
+| 想深入 | 看这里 |
+|---|---|
+| 一条改动怎么变成一串 nodeid（逐文件、逐调用链） | [`docs/TIA完全入门.md`](docs/TIA完全入门.md) |
+| 一页纸交付报告：数字与复现命令 | [`docs/tia-report.md`](docs/tia-report.md) |
+| 契约、CLI 定义、明确不做什么 | [`docs/tia-plan.md`](docs/tia-plan.md) |
+| 两轮独立核验记录与遗留项 | [`docs/tia-review.md`](docs/tia-review.md) |
+
+> 下面从「接口 + UI + 业务全链路自动化测试框架」开始的内容**原样继承自上游**，其中的用例数
+> （636 条）与覆盖率数字都是**上游口径**；本仓当前是 **697 条收集**（上游 636 + TIA 相关 61 条）。
+> 两套数字并存不是笔误——改上游段落会把「这是 fork、上游一字未改」这件事抹掉。
+
+---
+
 # 接口 + UI + 业务全链路自动化测试框架
 
 [![Auto Test](https://github.com/lefan17/fullstack-test-framework/actions/workflows/test.yml/badge.svg)](https://github.com/lefan17/fullstack-test-framework/actions/workflows/test.yml)

@@ -271,6 +271,11 @@ def _new_lines_from_diff(patch: str) -> set[int]:
         start = int(match.group(3))
         count = int(match.group(4) or 1)
         if count <= 0:
+            # 纯删除（``d == 0``）：被删的行在新文件里已经不存在，没有「目标行号」可指。
+            # 但删除同样会打破依赖它的用例——如果只收新增行，
+            # 「同一文件里删掉一处、又在别处加几行」这种改动就会丢掉删除侧的影响。
+            # 取删除位置的相邻两行作锚点：宁可多选几条，也不静默漏选。
+            lines.update({max(1, start - 1), start})
             continue
         lines.update(range(start, start + count))
     return lines
@@ -735,7 +740,16 @@ def render_text(sel: Selection) -> str:
     lines.extend(f"  - {item}" for item in sel.matched_files)
     lines.append(f"命中接口路径: {len(sel.matched_paths)} 条")
     lines.extend(f"  - {item}" for item in sel.matched_paths)
-    lines.append(f"选中: {len(sel.node_ids)} / {sel.total_cases} 条用例（{sel.ratio:.2%}）")
+    if sel.full:
+        # full=True 时 node_ids 恒为空（契约定义），直接打印 len(node_ids) 会得到
+        # 「选中: 0 / 697（0.00%）」——与上一行的「全量兜底」自相矛盾，
+        # 而且 `selected: 0` 会被 CI 脚本读成「无事可做」。这里显式改写人读的语义。
+        if sel.total_cases > 0:
+            lines.append(f"选中: 全量 {sel.total_cases} 条用例（逐条 nodeid 省略，等价于不带 --select）")
+        else:
+            lines.append("选中: 全量（用例数为 0，收集可能失败——先看上面的原因）")
+    else:
+        lines.append(f"选中: {len(sel.node_ids)} / {sel.total_cases} 条用例（{sel.ratio:.2%}）")
     if sel.node_ids:
         lines.append("用例:")
         lines.extend(f"  - {node_id}" for node_id in sel.node_ids)

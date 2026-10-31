@@ -369,9 +369,11 @@ def test_node_ids_are_sorted_regardless_of_case_input_order() -> None:
 
 
 def test_new_lines_from_diff_parses_unified_zero_context_hunks() -> None:
-    """`git diff -U0` 的 hunk 头解析：省略行数按 1 算，`d == 0`（纯删除）不编造目标行。
+    """`git diff -U0` 的 hunk 头解析：省略行数按 1 算，纯删除取删除位置的相邻两行作锚点。
 
-    纯删除编行号会去命中「删除位置之后的那行」，属于把影响面猜小了。
+    纯删除（``d == 0``）在新文件里没有对应行，但删除同样会打破依赖它的用例。
+    只收新增行会让「同一文件里删一处、又在别处加几行」丢掉删除侧的影响，
+    所以这里退一步取 ``c-1`` 与 ``c``：宁可多选几条，也不静默漏选。
     """
     patch = (
         "@@ -10,0 +11,2 @@ def create_order():\n"
@@ -383,7 +385,23 @@ def test_new_lines_from_diff_parses_unified_zero_context_hunks() -> None:
         "-    gone\n"
     )
 
-    assert tia._new_lines_from_diff(patch) == {11, 12, 25}
+    # 11/12 新增；25 是省略行数时的 +25；30/31 是纯删除 hunk 的锚点（+31 → 30 与 31）
+    assert tia._new_lines_from_diff(patch) == {11, 12, 25, 30, 31}
+
+
+def test_pure_deletion_elsewhere_does_not_erase_the_whole_file_from_selection() -> None:
+    """同文件里「删一处、加另一处」时，删除侧不能因为「没有新行号」而整段消失。
+
+    这是行级策略最容易静默漏选的一种改动：只收 ``+`` 行，删除就不与任何用例关联了。
+    回归保护对应 `qaplat/tia.py` 的 `_new_lines_from_diff`——纯删除 hunk 会取
+    ``c-1`` 与 ``c`` 作锚点。
+    """
+    patch = "@@ -10,3 +10,0 @@\n-a\n-b\n-c\n@@ -30,0 +28,1 @@\n+z\n"
+
+    got = tia._new_lines_from_diff(patch)
+
+    assert 28 in got, "新增行必须在集合里"
+    assert got & {9, 10}, f"删除位置（+10 附近）必须留下锚点，实际 {sorted(got)}"
 
 
 def test_git_failure_raises_instead_of_returning_an_empty_change_set(
@@ -444,7 +462,10 @@ def test_render_text_declares_the_known_limits() -> None:
 
     whole = tia.render_text(tia.select([], CASES))
     assert "模式: 全量兜底（full）" in whole
-    assert "选中: 0 / 3 条用例（0.00%）" in whole
+    # 全量兜底时 node_ids 恒为空，但「选中 0 条（0.00%）」会与「全量」自相矛盾，
+    # 也会让 CI 把 selected=0 读成「无事可做」——文本必须说清将要跑全量。
+    assert "选中: 全量 3 条用例" in whole
+    assert "0.00%" not in whole
     assert "用例:" not in whole
 
 
