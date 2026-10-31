@@ -168,7 +168,14 @@ _DOC_ONLY_SUFFIXES: tuple[str, ...] = (".md", ".markdown", ".rst", ".txt", ".ado
 
 
 def _is_doc_only(path: str) -> bool:
-    """变更文件是否「纯文档」——改了它不会让任何用例失败。"""
+    """变更文件是否「纯文档」——改了它不会让任何用例失败。
+
+    **必跑清单优先**：``requirements.txt`` 也以 ``.txt`` 结尾，但改依赖会影响所有用例的
+    运行环境，绝不能被文档白名单吞掉。所以先问 ``_is_always_full``，它是「一改就全量」
+    的唯一权威（该函数定义在本函数之后，Python 只在调用时解析，没问题）。
+    """
+    if _is_always_full(path):
+        return False
     return path.lower().endswith(_DOC_ONLY_SUFFIXES)
 
 
@@ -545,7 +552,23 @@ def select(
     matched_files: list[str] = []
     matched_paths: set[str] = set()
 
-    for path in used:
+    # 纯文档变更：v1 会去这些文件里读 `/api` 字面量，README 正文里提到的路径会被当真
+    # （实测 `README.md` 因此命中 208 条用例、`CHANGELOG.md` 命中 56 条），纯属误判。
+    # 与 `select_by_lines` 保持同一档 `strategy="docs"`。
+    runnable = tuple(path for path in used if not _is_doc_only(path))
+    if not runnable:
+        return Selection(
+            node_ids=(),
+            full=False,
+            reason=f"仅文档变更（{len(used)} 个文件），不影响任何用例",
+            changed_files=used,
+            total_cases=total,
+            matched_files=(),
+            matched_paths=(),
+            strategy="docs",
+        )
+
+    for path in runnable:
         if _is_always_full(path):
             return _full(used, total, f"关键文件 {path} 命中必跑清单（改动影响所有用例），退化为全量", "full")
         if path.startswith(_TESTCASES_PREFIX):
@@ -816,7 +839,11 @@ def render_json(sel: Selection) -> str:
         "strategy": sel.strategy,
         "reason": sel.reason,
         "total_cases": sel.total_cases,
+        # `selected` 是「显式选中的 nodeid 个数」，全量时恒为 0 是**契约明文**（全量的执行集
+        # 不是一张清单）。但它太容易被 CI 读成「无事可做」，于是另加 `effective_count` =
+        # 这一轮**实际要跑多少条**。老字段一个都不动，纯增量。
         "selected": len(sel.node_ids),
+        "effective_count": sel.total_cases if sel.full else len(sel.node_ids),
         "ratio": round(sel.ratio, 4),
         "changed_files": list(sel.changed_files),
         "matched_files": list(sel.matched_files),
@@ -911,6 +938,18 @@ def index_staleness(data_path: Path, *, cwd: Path | None = None) -> tuple[bool, 
         behind = _run_git(["rev-list", "--count", f"{captured}..{current}"], workdir).strip()
     except RuntimeError:
         pass
+    if behind == "?":
+        return True, (
+            f"索引与当前 HEAD 不同（采集于 {captured[:12]}，当前 {current[:12]}），"
+            f"但算不出相差几个提交（多半不在同一条历史线上），建议重采"
+        )
+    if behind == "0":
+        # 索引比当前 HEAD 新：切到了旧分支、或采集后回退了检出点。
+        # 此时说「落后 0 个提交」是句假话——它不是旧，它是「未来」。
+        return True, (
+            f"索引比当前 HEAD 新：采集于 {captured[:12]}，当前检出的是 {current[:12]}。"
+            f"两者不在同一条历史线上（切了分支或回退了检出点），行号可能整体错位，建议重采"
+        )
     return True, (
         f"索引落后：采集于 {captured[:12]}，当前 HEAD {current[:12]}，"
         f"中间有 {behind} 个提交未被覆盖 —— 这些提交里新增的测试不会被选中"

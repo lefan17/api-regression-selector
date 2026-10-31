@@ -356,6 +356,9 @@ def test_render_json_matches_the_documented_contract() -> None:
         "reason",
         "total_cases",
         "selected",
+        # 纯增量字段：老字段一个没动，`effective_count` 只回答「这一轮实际要跑多少条」，
+        # 免得上游 CI 把全量时的 `selected: 0` 读成「无事可做」。
+        "effective_count",
         "ratio",
         "changed_files",
         "matched_files",
@@ -369,6 +372,7 @@ def test_render_json_matches_the_documented_contract() -> None:
     assert partial["strategy"] == "files"
     assert partial["total_cases"] == 3
     assert partial["selected"] == 2
+    assert partial["effective_count"] == 2  # 部分选择时与 selected 一致
     assert partial["ratio"] == 0.6667
     assert partial["node_ids"] == [NODE_A, NODE_B]
     assert partial["changed_files"] == [TEST_FILE]
@@ -380,6 +384,8 @@ def test_render_json_matches_the_documented_contract() -> None:
     assert whole["full"] is True
     assert whole["strategy"] == "full"
     assert whole["selected"] == 0
+    # 关键差异：全量时 selected 是 0（执行集不是清单），但实际要跑的是全部 3 条。
+    assert whole["effective_count"] == 3
     assert whole["ratio"] == 0.0
     assert whole["node_ids"] == []
     assert whole["changed_files"] == []
@@ -606,6 +612,41 @@ def test_mixed_doc_and_code_change_only_judges_the_code_part() -> None:
 def test_openapi_json_is_a_contract_not_documentation() -> None:
     """docs/openapi.json 是契约而不是文档：它必须继续全量，不能被文档白名单吞掉。"""
     sel = tia.select_by_lines([tia.ChangedHunk("docs/openapi.json", (12,))], {}, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert "必跑清单" in sel.reason
+
+
+def test_v1_select_also_skips_doc_only_changes() -> None:
+    """v1（文件级）也要有 docs 分流，否则改一份 README 会命中一堆假路径。
+
+    修复前 `select()` 会去 README 正文里读 `/api` 字面量：实测 `README.md` 因此命中
+    **208 条**用例、`CHANGELOG.md` 命中 56 条。这里用替身 reader 把「假路径」放大，
+    确保分流发生在读文件**之前**——reader 一次都不该被调用。
+    """
+    calls: list[str] = []
+
+    def reader(path: str) -> tuple[str, ...]:
+        calls.append(path)
+        return ("/api/login",)
+
+    sel = tia.select(["README.md", "docs/tia-plan.md"], CASES, path_reader=reader)
+
+    assert sel.full is False
+    assert sel.strategy == "docs"
+    assert sel.node_ids == ()
+    assert calls == []  # 关键：没有对文档做路径提取
+    assert "仅文档变更" in sel.reason
+
+
+def test_requirements_txt_is_not_swallowed_by_the_doc_whitelist() -> None:
+    """`requirements.txt` 也是 `.txt`，但它改的是所有用例的运行环境 → 必须全量。
+
+    这是 `_is_doc_only` 里「必跑清单优先」那条顺序的回归保护：把两者顺序调换，
+    `requirements.txt` 就会被当成文档跳过，改依赖将不再触发任何测试。
+    """
+    sel = tia.select(["requirements.txt"], CASES, path_reader=lambda path: ())
 
     assert sel.full is True
     assert sel.strategy == "full"
@@ -919,7 +960,57 @@ def test_staleness_detects_a_commit_the_index_predates(tmp_path: Path) -> None:
     stale, message = tia.index_staleness(data, cwd=REPO_ROOT)
 
     assert stale is True
-    assert "落后" in message
+    # 这个 commit id 根本不存在，`rev-list --count` 会失败 → 走「算不出相差几个」分支。
+    # 断言只钉「说了它不同 + 建议重采」，不钉具体措辞。
+    assert ("不在同一条历史线" in message) or ("比当前 HEAD 新" in message)
+    assert "建议重采" in message
+
+
+def _fake_git(monkeypatch: pytest.MonkeyPatch, behind: str) -> None:
+    """把 `rev-parse` 固定成 b*40、`rev-list --count` 固定成给定值。"""
+    real = tia._run_git
+
+    def fake(args: Sequence[str], cwd: Path, **kwargs: object) -> str:
+        if args and args[0] == "rev-parse":
+            return "b" * 40
+        if args and args[0] == "rev-list":
+            return behind
+        return real(args, cwd, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tia, "_run_git", fake)
+
+
+def test_staleness_reports_how_many_commits_are_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """能算出相差几个提交时，文案要给出那个数字——它直接回答「该不该先重采」。"""
+    data = tmp_path / ".tia-coverage"
+    data.write_bytes(b"x")
+    tia.head_marker_path(data).write_text(json.dumps({"head": "a" * 40}), encoding="utf-8")
+    _fake_git(monkeypatch, "3")
+
+    stale, message = tia.index_staleness(data, cwd=tmp_path)
+
+    assert stale is True
+    assert "中间有 3 个提交未被覆盖" in message
+
+
+def test_staleness_does_not_claim_being_behind_when_index_is_ahead(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """索引比 HEAD 新（切到旧分支）时，「落后 0 个提交」是句假话。
+
+    此时 `captured..current` 的计数是 0，但索引既不旧、也不是「落后 0」——
+    它在另一条历史线上，行号可能整体错位。文案必须说清这件事。
+    """
+    data = tmp_path / ".tia-coverage"
+    data.write_bytes(b"x")
+    tia.head_marker_path(data).write_text(json.dumps({"head": "a" * 40}), encoding="utf-8")
+    _fake_git(monkeypatch, "0")
+
+    stale, message = tia.index_staleness(data, cwd=tmp_path)
+
+    assert stale is True
+    assert "比当前 HEAD 新" in message
+    assert "落后 0" not in message
 
 
 def test_capture_command_writes_marker_and_refuses_missing_data(tmp_path: Path) -> None:

@@ -1598,8 +1598,8 @@ def readyz():
 上面那张表是直接调 `select_by_lines()` 拿到的。真正在终端跑，是这样一个来回（工作区干净时）：
 
 ```bash
-# 只动一行：在 readyz 那次查询的行尾加个注释，不改任何行为
-sed -i '65s/$/  # tia-demo/' mock_server/routers.py
+# 只动一行：在 normalize_path 的 return 前加个空注释，不改任何行为
+sed -i '70s/$/  # tia-demo/' qaplat/registry.py
 
 # 看这次改动会影响哪些用例（不跑测试）
 python -m qaplat.cli tia select --base HEAD
@@ -1609,32 +1609,32 @@ python -m qaplat.cli tia select --base HEAD
 
 ```
 模式: 部分选择（lines 策略）
-原因: 命中 1 条用例（分布在 1 个测试文件、覆盖 1 条变更行）
+原因: 命中 34 条用例（分布在 1 个测试文件、覆盖 1 条变更行）
 变更文件: 1 个
-  - mock_server/routers.py
+  - qaplat/registry.py
 命中测试文件: 1 个
-  - testcases/contract/test_contract_export.py
-命中接口路径: 0 条
-选中: 1 / 689 条用例（0.15%）
-用例:
-  - testcases/contract/test_contract_export.py::test_live_error_status_codes_are_reachable
+  - testcases/platform/test_tia.py
+选中: 34 / 708 条用例（4.8%）
+用例:（34 条，逐条省略）
 已知限制: 影响面按文件/行粒度判定；动态拼接路径提取不到会退化为全量；已删除用例匹配不到同样退化为全量
 ```
 
 `--json` 是同一份结果的机器可读版：
 
 ```json
-{"full": false, "strategy": "lines", "selected": 1, "ratio": 0.0015,
- "total_cases": 689, "changed_files": ["mock_server/routers.py"]}
+{"full": false, "strategy": "lines", "selected": 34, "effective_count": 34,
+ "ratio": 0.048, "total_cases": 708, "changed_files": ["qaplat/registry.py"]}
 ```
 
-**分母是 689，不是 636**——636 是采集 `.tia-coverage` 那一刻的口径，之后又新增了 53 条平台自测（`test_tia.py`），所以当前全量是 689。这就是 6.5 讲的「分母看口径」，别拿两个分母的数直接比。
+**这个例子只选得动平台层，是有原因的**：`qaplat/registry.py` 和它的测试在同一个进程里跑，
+coverage-context 才认得准「哪条用例执行过哪一行」。同样改 `mock_server/routers.py` 一行，
+结果是**全量 708 条**——第 9.1 节第 0 条讲了为什么。
 
-只跑被选中的那一条：
+只跑被选中的那 34 条：
 
 ```bash
-python -m pytest "testcases/contract/test_contract_export.py::test_live_error_status_codes_are_reachable" -q
-# 1 passed in 2.21s
+python -m pytest testcases/platform/test_tia.py -q
+# 34 passed in 2.55s（vs 全量 139.64s）
 ```
 
 **2.21s vs 196.55s ≈ 89 倍**。它和上面那个 2.83s 不矛盾：两次是不同时间的独立运行，pytest 报的自身计时本身就有波动，而倍数的大头是「起一次 pytest + 起一次 `mock_server`」的固定开销——所以这个倍数只能当量级看，不能当常数用。

@@ -59,8 +59,19 @@ jobs:
           # 索引文件名刻意不以 .coverage 开头：.coveragerc 是 parallel=true，
           # pytest-cov 的 erase() 会按 `.coverage.*` 删除分片，`.coverage.tia` 会被误删。
           COVERAGE_FILE: .tia-coverage
+          # 与 test.yml 对齐：CI 机器比本机慢，接口响应时间的上限要放宽，
+          # 否则 testcases/api/test_response_time.py 会按默认 5000ms 误报。
+          MAX_RESPONSE_MS: "8000"
+          CONTRACT_MAX_EXAMPLES: "8"
         run: |
-          python -m pytest -m "not ui" --cov=. --cov-context=test --cov-report= -q
+          # 采集的目的是「拿到索引」，不是「当门禁」。上游本来就有 3 条已知基线红，
+          # 若让它们中断 job（bash -e 的默认行为），后面的 capture / 选择 / 上传全跑不到。
+          # 所以这里 `|| true`，真正的质量判定交给后面的 gate 步骤。
+          python -m pytest -m "not ui" --cov=. --cov-context=test --cov-report= -q || true
+          if [ ! -f .tia-coverage ]; then
+            echo "::error::采集没有产出 .tia-coverage，索引不可用；请检查上面的 pytest 输出"
+            exit 1
+          fi
 
       - name: 记录 HEAD（让下一次能判断索引是否过期）
         run: |

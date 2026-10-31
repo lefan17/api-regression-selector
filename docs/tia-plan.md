@@ -135,6 +135,7 @@ def render_json(sel: Selection) -> str   # 固定字段，供 CI 解析
   "reason": "命中 3 个测试文件、12 条接口路径",
   "total_cases": 636,
   "selected": 87,
+  "effective_count": 87,
   "ratio": 0.1368,
   "changed_files": ["testcases/login/test_login_contract.py"],
   "matched_files": ["testcases/login/test_login_contract.py"],
@@ -145,6 +146,10 @@ def render_json(sel: Selection) -> str   # 固定字段，供 CI 解析
 
 `strategy` 取值：`full`（全量兜底）／`files`（v1 文件级）／`lines`（v2 行级）／
 `docs`（仅文档变更：`full=false` 且 `selected=0`，不必跑任何用例）。
+
+`selected` 是「显式选中的 nodeid 个数」，全量时恒为 0（执行集不是清单）。为了让 CI 不必
+自己拼 `full ? total_cases : selected`，另给 `effective_count` = 这一轮实际要跑多少条。
+它**是纯增量字段**：老的十个字段一个没改名、没删。
 
 ### 4.2 `qaplat/cli.py`
 
