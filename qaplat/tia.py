@@ -129,8 +129,9 @@ class Selection:
     total_cases: int
     matched_files: tuple[str, ...]
     matched_paths: tuple[str, ...]
-    #: 本次用了哪一档判据：``full``（全量兜底）/ ``files``（v1 文件级）/ ``lines``（v2 行级）。
-    #: 有默认值是为了让「旧的三档构造方式」仍然能写出 Selection。
+    #: 本次用了哪一档判据：``full``（全量兜底）/ ``files``（v1 文件级）/ ``lines``（v2 行级）/
+    #: ``docs``（仅文档变更，不必跑任何用例）。有默认值是为了让「旧的三档构造方式」仍能写出
+    #: Selection。
     strategy: str = "files"
 
     @property
@@ -143,6 +144,21 @@ class Selection:
         if self.total_cases <= 0:
             return 0.0
         return len(self.node_ids) / self.total_cases
+
+
+#: 纯文档后缀：改这些文件不会让任何用例失败，因此**不该**把整层跑一遍。
+#:
+#: 成立的依据是「仓库里没有测试读它们」——``testcases/**`` 对 ``.md`` 的引用全部出现在
+#: 注释与文档字符串里，没有 ``read_text()``／``open()``。哪天有人加了「文档链接检查」
+#: 这类测试，就必须先把它从这份清单里摘掉，否则 TIA 会漏掉它。
+#: ``docs/openapi.json`` 是契约而不是文档，它由 ``ALWAYS_FULL_PREFIXES`` 先判全量，
+#: 到不了这里。
+_DOC_ONLY_SUFFIXES: tuple[str, ...] = (".md", ".markdown", ".rst", ".txt", ".adoc")
+
+
+def _is_doc_only(path: str) -> bool:
+    """变更文件是否「纯文档」——改了它不会让任何用例失败。"""
+    return path.lower().endswith(_DOC_ONLY_SUFFIXES)
 
 
 def _normalize_path(raw: str) -> str:
@@ -610,6 +626,21 @@ def select_by_lines(
     if not changed:
         return _full(changed, total, "没有可用的变更行（diff 为空），无法判定影响面，按全量兜底", "full")
 
+    # 纯文档变更不该触发全量：没有用例读 .md，为一份 README 跑满 697 条是纯浪费。
+    # 混合变更（代码 + 文档）只对代码走行级，文档部分不参与判定也不触发兜底。
+    runnable = tuple(path for path in changed if not _is_doc_only(path))
+    if not runnable:
+        return Selection(
+            node_ids=(),
+            full=False,
+            reason=f"仅文档变更（{len(changed)} 个文件），不影响任何用例",
+            changed_files=changed,
+            total_cases=total,
+            matched_files=(),
+            matched_paths=(),
+            strategy="docs",
+        )
+
     by_file: dict[str, list[str]] = {}
     for case in cases:
         by_file.setdefault(_file_of(case.node_id), []).append(case.node_id)
@@ -619,7 +650,7 @@ def select_by_lines(
     matched_files: list[str] = []
     hit_line_count = 0
 
-    for path in changed:
+    for path in runnable:
         if _is_always_full(path, prefixes=_LINES_FULL_PREFIXES):
             return _full(changed, total, f"关键文件 {path} 命中必跑清单（改动影响所有用例），退化为全量", "full")
         if path.startswith(_TESTCASES_PREFIX):
@@ -728,6 +759,8 @@ def render_text(sel: Selection) -> str:
     """
     if sel.full:
         mode = f"全量兜底（{sel.strategy}）"
+    elif sel.strategy == "docs":
+        mode = "不选（仅文档变更）"
     else:
         mode = f"部分选择（{sel.strategy} 策略）"
     lines = [
@@ -762,9 +795,10 @@ def render_text(sel: Selection) -> str:
 def render_json(sel: Selection) -> str:
     """机器可读的选择结果（CLI ``--json`` / CI 解析）。
 
-    字段名是**对外契约**（tia-plan.md §4.1），一个都不许改名；``strategy`` 是行级策略
-    追加的键（``full`` / ``files`` / ``lines``），让消费方能区分「为什么全量」与「按什么
-    选中」。``ratio`` 保留 4 位小数：与契约示例（0.1368）一致，也避免浮点尾巴让 diff 抖动。
+    字段名是**对外契约**（tia-plan.md §4.1），一个都不许改名；``strategy`` 让消费方能区分
+    「为什么全量」与「按什么选中」，取值有 ``full`` / ``files`` / ``lines`` / ``docs``
+    （``docs`` = 仅文档变更，不必跑任何用例；此时 ``selected`` 为 0 且 ``full`` 为 false）。
+    ``ratio`` 保留 4 位小数：与契约示例（0.1368）一致，也避免浮点尾巴让 diff 抖动。
     """
     payload = {
         "full": sel.full,

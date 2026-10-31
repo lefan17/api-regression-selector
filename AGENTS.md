@@ -24,6 +24,11 @@ $VENV -m pytest -m api -n 4 --dist loadfile      # 接口层
 $VENV -m pytest -m platform                      # qaplat 平台层
 $VENV -m mypy                                    # 配置全在 pyproject.toml，别加参数
 $VENV -m ruff check . && $VENV -m ruff format --check .
+
+# TIA（变更 → 测试选择）。入口是 -m qaplat.cli，不是 -m qaplat（这个包没有 __main__.py）
+$VENV -m qaplat.cli tia select --base HEAD~1     # 只打印会影响哪些用例，不跑测试
+$VENV -m qaplat.cli gate --layer pr --select tia --base origin/main   # 门禁内启用（默认关闭）
+$VENV -m qaplat.cli tia capture --coverage-data .tia-coverage        # 采集后记下 HEAD
 ```
 
 ## 环境硬约束（本仓特有，必读）

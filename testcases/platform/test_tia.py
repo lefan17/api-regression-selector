@@ -547,6 +547,43 @@ def test_files_outside_root_are_skipped_not_fatal(tmp_path: Path) -> None:
     assert sorted(tia.load_context_index(tmp_path / ".coverage", root=root)) == ["apis/user_api.py"]
 
 
+def test_doc_only_change_selects_nothing_instead_of_everything() -> None:
+    """纯文档变更（.md）不该触发全量：没有用例读它们，为一份 README 跑满一整层是纯浪费。
+
+    这条守护 `_is_doc_only` + `strategy="docs"` 这一档。README / AGENTS / docs/*.md 的
+    日常改动占 PR 相当大比例，如果每次都被判全量，TIA 在日常使用中等于不存在。
+    传入空索引即可验证：文档变更在查索引之前就分流了。
+    """
+    sel = tia.select_by_lines([tia.ChangedHunk("README.md", (5,))], {}, CASES)
+
+    assert sel.full is False
+    assert sel.strategy == "docs"
+    assert sel.node_ids == ()
+    assert sel.total_cases == 3
+    assert "仅文档变更" in sel.reason
+
+
+def test_mixed_doc_and_code_change_only_judges_the_code_part() -> None:
+    """代码 + 文档混合变更：文档不参与判定，也不能因为「不在索引里」而触发全量。"""
+    hunks = [tia.ChangedHunk("README.md", (5,)), tia.ChangedHunk(TEST_FILE, (1,))]
+
+    sel = tia.select_by_lines(hunks, {}, CASES)
+
+    assert sel.full is False
+    assert sel.strategy == "lines"  # 行级入口恒为 lines；文件级分流是 select() 的职责
+    assert sel.node_ids == (NODE_A, NODE_B)
+    assert "README.md" in sel.changed_files  # 报告里仍保留完整变更集
+
+
+def test_openapi_json_is_a_contract_not_documentation() -> None:
+    """docs/openapi.json 是契约而不是文档：它必须继续全量，不能被文档白名单吞掉。"""
+    sel = tia.select_by_lines([tia.ChangedHunk("docs/openapi.json", (12,))], {}, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert "必跑清单" in sel.reason
+
+
 def test_module_level_line_forces_full(tmp_path: Path) -> None:
     """分支⑫：变更行带空 context（import 期执行）→ 全量，reason 点名「模块级代码」。
 

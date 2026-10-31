@@ -127,7 +127,7 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 输出里会有一行：
 
 ```
-[qaplat] tia: selected=X/Y (ratio=Z%) full=BOOL strategy=lines|files|full reason=...
+[qaplat] tia: selected=X/Y (ratio=Z%) full=BOOL strategy=lines|files|full|docs reason=...
 ```
 
 **不给 `--select` 时行为与改造前逐字一致。**

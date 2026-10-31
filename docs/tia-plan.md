@@ -143,6 +143,9 @@ def render_json(sel: Selection) -> str   # 固定字段，供 CI 解析
 }
 ```
 
+`strategy` 取值：`full`（全量兜底）／`files`（v1 文件级）／`lines`（v2 行级）／
+`docs`（仅文档变更：`full=false` 且 `selected=0`，不必跑任何用例）。
+
 ### 4.2 `qaplat/cli.py`
 
 ```

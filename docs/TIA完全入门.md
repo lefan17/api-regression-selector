@@ -1068,13 +1068,21 @@ return Selection(
 
 为什么不把 636 个 nodeid 抄进 `node_ids`：契约里「全量」的语义是「等价于不带 `--select`」；抄一份进去只会让 JSON 变大，还会诱导调用方把 636 个 nodeid 拼进命令行（Windows 上有命令行长度上限）。
 
-`strategy` 三个取值（`qaplat/tia.py:134`）：
+`strategy` 四个取值（`qaplat/tia.py:134`）：
 
 | 值 | 含义 | 由谁产出 |
 |---|---|---|
 | `full` | 全量兜底 | `_full()`，两套策略都会走到 |
 | `files` | v1 文件级选择 | `select()` |
 | `lines` | v2 行级选择 | `select_by_lines()` |
+| `docs` | 仅文档变更，不必跑任何用例 | `select_by_lines()` 在查索引之前分流 |
+
+`docs` 这一档值得单说：`.md` / `.rst` / `.txt` 这类文件不在覆盖索引里（没有用例执行过
+它们），若按「查不到索引 → 影响面未知 → 全量」的默认路径走，改一份 README 就要跑满一整层。
+而仓库里**没有任何测试读这些文件**，所以它们被单独摘出来判「0 条」。这条白名单成立的前提
+写在 `qaplat/tia.py` 的 `_DOC_ONLY_SUFFIXES` 注释里：哪天有人加了「文档链接检查」这类测试，
+必须先把对应后缀从清单里摘掉。`docs/openapi.json` 是契约不是文档，由
+`ALWAYS_FULL_PREFIXES` 先判全量，到不了这一档。
 
 ### 4.7 一条改动在代码里的完整旅程
 
@@ -1319,10 +1327,10 @@ return list(sel.node_ids) + list(args.passthrough)
 **① 摘要行格式固定**：
 
 ```
-[qaplat] tia: selected=X/Y (ratio=Z%) full=BOOL strategy=lines|files|full reason=...
+[qaplat] tia: selected=X/Y (ratio=Z%) full=BOOL strategy=lines|files|full|docs reason=...
 ```
 
-`selected=X/Y` 里 X 是 `len(sel.node_ids)`、Y 是 `sel.total_cases`；`strategy` 三值见 4.6 节；`reason` 是判据给出的中文解释。这行是排查 TIA 行为的**第一现场**：看到 `full=True` 就别去翻 nodeid 了，先看 `reason` 说哪条判据兜底。
+`selected=X/Y` 里 X 是 `len(sel.node_ids)`、Y 是 `sel.total_cases`；`strategy` 四值见 4.6 节；`reason` 是判据给出的中文解释。这行是排查 TIA 行为的**第一现场**：看到 `full=True` 就别去翻 nodeid 了，先看 `reason` 说哪条判据兜底。
 
 **② `sel.full` 时只返回 `passthrough`**（`qaplat/cli.py:236-237`）：全量兜底的含义是「影响面判定不了」，这时再叠一层 nodeid 过滤，等于先声称判不了、又偷偷把范围收窄回去。所以 `full=True` 的产物就是「不带 `--select` 的原命令」，只是多了一行说明。
 
