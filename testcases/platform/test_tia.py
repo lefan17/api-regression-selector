@@ -175,14 +175,14 @@ def test_injected_path_reader_selects_referencing_cases() -> None:
     这是「路径交集」逻辑唯一的可测入口：真实 `mock_server/routers.py` 提取不出路径
     （前缀在 app.py 拼），不注入替身就永远进不到这个分支。
     """
-    sel = tia.select(["mock_server/services.py"], CASES, path_reader=lambda _path: ("/api/v1/login",))
+    sel = tia.select(["apis/user_api.py"], CASES, path_reader=lambda _path: ("/api/v1/login",))
 
     assert sel.full is False
     assert sel.strategy == "files"
     assert sel.node_ids == (NODE_A,)
     assert sel.matched_files == ()
     assert sel.matched_paths == ("/api/v1/login",)
-    assert sel.changed_files == ("mock_server/services.py",)
+    assert sel.changed_files == ("apis/user_api.py",)
     assert sel.reason == "命中 0 个测试文件、1 条接口路径"
 
 
@@ -199,7 +199,7 @@ def test_placeholder_parameters_are_normalized_before_intersection() -> None:
             covers=(),
         ),
     )
-    sel = tia.select(["mock_server/services.py"], cases, path_reader=lambda _path: ("/api/v1/materials/{code}",))
+    sel = tia.select(["apis/user_api.py"], cases, path_reader=lambda _path: ("/api/v1/materials/{code}",))
 
     assert sel.full is False
     assert sel.node_ids == ("testcases/api/test_materials.py::test_get_material",)
@@ -208,22 +208,24 @@ def test_placeholder_parameters_are_normalized_before_intersection() -> None:
 
 def test_paths_without_any_referencing_case_fall_back_to_full() -> None:
     """分支⑤：提取到了路径，但没有任何用例引用它（有代码没人测）→ 全量兜底。"""
-    sel = tia.select(["mock_server/services.py"], CASES, path_reader=lambda _path: ("/api/v1/unknown",))
+    sel = tia.select(["apis/user_api.py"], CASES, path_reader=lambda _path: ("/api/v1/unknown",))
 
     assert sel.full is True
     assert sel.strategy == "full"
     assert sel.node_ids == ()
-    assert sel.changed_files == ("mock_server/services.py",)
-    assert sel.reason == "mock_server/services.py 提取到 1 条接口路径，但没有任何用例引用它们，退化为全量"
+    assert sel.changed_files == ("apis/user_api.py",)
+    assert sel.reason == "apis/user_api.py 提取到 1 条接口路径，但没有任何用例引用它们，退化为全量"
 
 
 def test_real_source_module_without_path_literals_falls_back_to_full() -> None:
-    """分支⑥：真实的 `mock_server/services.py` 里没有 `/api` 字面量 → 全量兜底。
+    """分支⑥：真实的 `apis/user_api.py` 里没有 `/api` 字面量 → 全量兜底。
 
+    这里刻意用 `apis/`（同进程 import，行级判定真实可用）而不是 `mock_server/`：
+    后者已被收进「必跑清单」，永远走全量，测不到这一分支。
     第一行是**前提断言**：它红掉说明「这个文件现在有路径字面量了」，该换一个纯业务模块
     来做场景，而不是放宽 `select` 的判据。
     """
-    source = "mock_server/services.py"
+    source = "apis/user_api.py"
     assert registry.read_referenced_paths(REPO_ROOT / source) == ()
 
     sel = tia.select([source], CASES)
@@ -232,8 +234,34 @@ def test_real_source_module_without_path_literals_falls_back_to_full() -> None:
     assert sel.strategy == "full"
     assert sel.node_ids == ()
     assert sel.reason == (
-        "mock_server/services.py 未提取到 /api 路径字面量（公共模块/动态拼接/非源码），无法判定影响面，退化为全量"
+        "apis/user_api.py 未提取到 /api 路径字面量（公共模块/动态拼接/非源码），无法判定影响面，退化为全量"
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "mock_server/routers.py",
+        "mock_server/app.py",
+        "mock_server/services.py",
+        "login_app/app.py",
+        "mes_web/app.py",
+        "ui/pages/login_page.py",
+    ],
+)
+def test_subprocess_served_code_always_falls_back_to_full(path: str) -> None:
+    """被测服务由子进程拉起，coverage context 在 spawn 那一刻固定 → 行级判定会静默漏掉绝大多数用例。
+
+    实测 `mock_server/routers.py` 的 444 行只关联 **10 个用例**（uvicorn 子进程里执行的行
+    全部算到「启动它的那条用例」头上），而实际有 423 条用例在打接口。所以这些目录必须留在
+    `ALWAYS_FULL_PREFIXES`：哪怕索引里「看起来」有精确的行数据，那正是陷阱。
+    """
+    sel = tia.select_by_lines([tia.ChangedHunk(path, (10,))], {}, CASES)
+
+    assert sel.full is True
+    assert sel.strategy == "full"
+    assert sel.node_ids == ()
+    assert "必跑清单" in sel.reason
 
 
 @pytest.mark.parametrize("changed", [(), ("",), ("   ",), ("./",)])
@@ -487,16 +515,16 @@ def test_load_context_index_normalizes_paths_and_strips_stage_suffix(tmp_path: P
         tmp_path / ".coverage",
         root,
         [
-            (f"{TEST_FILE}::test_lc01_login_success|run", {"mock_server/services.py": {10, 11}}),
-            (f"{TEST_FILE}::test_lc01_login_success|setup", {"mock_server/services.py": {3}}),
+            (f"{TEST_FILE}::test_lc01_login_success|run", {"apis/user_api.py": {10, 11}}),
+            (f"{TEST_FILE}::test_lc01_login_success|setup", {"apis/user_api.py": {3}}),
             ("testcases/mes/test_order_flow.py::test_create|run", {"qaplat/gate.py": {7}}),
         ],
     )
 
     index = tia.load_context_index(data, root=root)
 
-    assert sorted(index) == ["mock_server/services.py", "qaplat/gate.py"]
-    services = index["mock_server/services.py"]
+    assert sorted(index) == ["apis/user_api.py", "qaplat/gate.py"]
+    services = index["apis/user_api.py"]
     assert sorted(services) == [3, 10, 11]
     assert services[10] == (f"{TEST_FILE}::test_lc01_login_success",)
     assert services[3] == (f"{TEST_FILE}::test_lc01_login_success",)
@@ -592,17 +620,17 @@ def test_module_level_line_forces_full(tmp_path: Path) -> None:
     """
     root = tmp_path / "clone"
     root.mkdir()
-    data = _build_coverage(tmp_path / ".coverage", root, [(None, {"mock_server/services.py": {1, 2}})])
+    data = _build_coverage(tmp_path / ".coverage", root, [(None, {"apis/user_api.py": {1, 2}})])
     index = tia.load_context_index(data, root=root)
 
-    assert index["mock_server/services.py"][1] == (tia._MODULE_LEVEL,)
+    assert index["apis/user_api.py"][1] == (tia._MODULE_LEVEL,)
 
-    sel = tia.select_by_lines([tia.ChangedHunk("mock_server/services.py", (2,))], index, CASES)
+    sel = tia.select_by_lines([tia.ChangedHunk("apis/user_api.py", (2,))], index, CASES)
 
     assert sel.full is True
     assert sel.strategy == "full"
     assert sel.node_ids == ()
-    assert sel.changed_files == ("mock_server/services.py",)
+    assert sel.changed_files == ("apis/user_api.py",)
     assert "第 2 行属于模块级代码" in sel.reason
     assert "import 期执行、不归属任何用例" in sel.reason
 
@@ -614,31 +642,31 @@ def test_executed_lines_select_their_cases_in_lines_strategy() -> None:
     否则 CLI 会把一个 pytest 认不出的 nodeid 拼进命令行，整层直接报 usage error。
     """
     index = {
-        "mock_server/services.py": {
+        "apis/user_api.py": {
             10: (NODE_A,),
             11: (NODE_B,),
             12: ("testcases/api/test_removed.py::test_gone",),
         }
     }
 
-    sel = tia.select_by_lines([tia.ChangedHunk("mock_server/services.py", (10, 11, 12))], index, CASES)
+    sel = tia.select_by_lines([tia.ChangedHunk("apis/user_api.py", (10, 11, 12))], index, CASES)
 
     assert sel.full is False
     assert sel.strategy == "lines"
     assert sel.node_ids == (NODE_A, NODE_B)
     assert sel.matched_files == (TEST_FILE,)
     assert sel.matched_paths == ()
-    assert sel.changed_files == ("mock_server/services.py",)
+    assert sel.changed_files == ("apis/user_api.py",)
     assert sel.reason == "命中 2 条用例（分布在 1 个测试文件、覆盖 3 条变更行）"
 
 
 @pytest.mark.parametrize(
     ("index", "needle"),
     [
-        ({"mock_server/services.py": {10: (NODE_A,)}}, "没有被任何已收集用例执行过"),
+        ({"apis/user_api.py": {10: (NODE_A,)}}, "没有被任何已收集用例执行过"),
         ({}, "不在覆盖索引里"),
         (
-            {"mock_server/services.py": {10: ("testcases/api/test_removed.py::test_gone",)}},
+            {"apis/user_api.py": {10: ("testcases/api/test_removed.py::test_gone",)}},
             "没有被任何已收集用例执行过",
         ),
     ],
@@ -652,7 +680,7 @@ def test_unexecuted_changed_lines_fall_back_to_full(
     这是行级策略最危险的失效面：把「没有任何用例执行过这一行」读成「这一行不重要」，
     就会漏掉「改了控制流、让原本不执行的代码开始执行」这类回归。
     """
-    sel = tia.select_by_lines([tia.ChangedHunk("mock_server/services.py", (99,))], index, CASES)
+    sel = tia.select_by_lines([tia.ChangedHunk("apis/user_api.py", (99,))], index, CASES)
 
     assert sel.full is True
     assert sel.strategy == "full"
@@ -663,17 +691,15 @@ def test_unexecuted_changed_lines_fall_back_to_full(
 def test_hunk_without_target_lines_falls_back_to_full() -> None:
     """分支⑮：`lines=()` 是「文件变了但拿不到目标行」（纯删除/二进制/重命名/未跟踪）→ 全量。"""
     sel = tia.select_by_lines(
-        [tia.ChangedHunk("mock_server/services.py", ())],
-        {"mock_server/services.py": {10: (NODE_A,)}},
+        [tia.ChangedHunk("apis/user_api.py", ())],
+        {"apis/user_api.py": {10: (NODE_A,)}},
         CASES,
     )
 
     assert sel.full is True
     assert sel.strategy == "full"
     assert sel.node_ids == ()
-    assert sel.reason == (
-        "mock_server/services.py 没有可用的新增行（纯删除/二进制/重命名/未跟踪），影响面未知，退化为全量"
-    )
+    assert sel.reason == ("apis/user_api.py 没有可用的新增行（纯删除/二进制/重命名/未跟踪），影响面未知，退化为全量")
 
 
 def test_testcase_hunk_selects_its_cases_without_touching_coverage() -> None:
@@ -795,7 +821,7 @@ def test_real_coverage_tia_index_has_the_expected_shape() -> None:
     # 2026-10 实测 119；低于 100 说明读取链路大面积失效，值得红。
     assert len(index) >= 100
     assert "qaplat/registry.py" in index
-    assert "mock_server/services.py" in index
+    assert "apis/user_api.py" in index
     registry_lines = index["qaplat/registry.py"]
     assert all(isinstance(line, int) for line in registry_lines)
     assert any(tia._MODULE_LEVEL in node_ids for node_ids in registry_lines.values())
@@ -911,3 +937,36 @@ def test_capture_command_writes_marker_and_refuses_missing_data(tmp_path: Path) 
 def _capture_args(data_path: Path) -> argparse.Namespace:
     """给 ``cmd_tia_capture`` 造一个最小 Namespace：它只读 ``coverage_data``。"""
     return argparse.Namespace(coverage_data=str(data_path))
+
+
+def test_gate_skips_the_whole_layer_when_only_docs_changed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """仅文档变更时本层一条用例都不该跑，更不能让空 extra 漏下去把整层跑一遍。
+
+    回归保护：``strategy="docs"`` 的 ``node_ids`` 是空的，若直接拼进 ``extra``，
+    pytest 会收集整层——那正是「改一份 README 却跑满 697 条」的老问题。
+    """
+    from qaplat import cli
+
+    docs_sel = tia.Selection(
+        node_ids=(),
+        full=False,
+        reason="仅文档变更（1 个文件），不影响任何用例",
+        changed_files=("README.md",),
+        total_cases=100,
+        matched_files=(),
+        matched_paths=(),
+        strategy="docs",
+    )
+    monkeypatch.setattr(tia, "select_from_git", lambda **_kw: docs_sel)
+    called: list[object] = []
+    monkeypatch.setattr(cli.gate, "run_layer", lambda *a, **k: called.append(a))
+
+    code = cli.main(["--db", str(tmp_path / "m.db"), "gate", "--layer", "smoke", "--select", "tia"])
+
+    assert code == cli.EXIT_OK
+    assert called == []  # 一层都没跑
+    assert "本层没有受影响的用例" in capsys.readouterr().out

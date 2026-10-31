@@ -48,16 +48,27 @@ from qaplat.registry import read_referenced_paths
 #: 前缀一个就覆盖 ``requirements.txt`` / ``requirements-perf.txt`` / ``requirements.lock``
 #: 三种写法（也顺带覆盖 ``requirements-notes.md`` 这种罕见文件名——方向是「多跑」，
 #: 不是漏跑，所以这个代价可以接受）。稳定排序，保证输出与断言可复现。
+#:
+#: **被测服务（``mock_server/`` / ``login_app/`` / ``mes_web/`` / ``ui/``）必须留在清单里。**
+#: 它们由测试通过子进程（uvicorn / playwright）拉起，而 ``--cov-context=test`` 的 context
+#: 在**子进程 spawn 的那一刻**就由 ``COV_CORE_CONTEXT`` 固定了：进程内执行的所有行，全部
+#: 算到「启动它的那条用例」头上。实测 ``mock_server/routers.py`` 的 444 行只关联到 10 个
+#: 用例，而实际有 423 条用例在打接口——让行级策略去判这个文件，会静默漏掉约 92% 的用例，
+#: 而且不报错。这属于「宁可多跑，不可漏跑」。
 ALWAYS_FULL_PREFIXES: tuple[str, ...] = tuple(
     sorted(
         {
             "data/",
             "docs/openapi.json",
+            "login_app/",
+            "mes_web/",
+            "mock_server/",
             "qaplat/",
             "requirements",
             "scripts/",
             "schemas/",
             "traffic-replay/",
+            "ui/",
         }
     )
 )

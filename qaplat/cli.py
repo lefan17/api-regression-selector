@@ -31,11 +31,13 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from qaplat import gate, registry, report
+from qaplat import gate, registry, report, tia
 from qaplat.gate import LAYERS, Layer, LayerSpec
 from qaplat.metrics import MetricsStore, RunRecord, case_outcomes_from_pairs, new_run_id
 from qaplat.paths import DEFAULT_DB, EXPORT_SCRIPT, ROOT
 
+#: 门禁达标 / 无需执行（例如仅文档变更时本层跳过）。
+EXIT_OK = 0
 #: 门禁未达标的退出码（契约固定）。
 EXIT_GATE_FAILED = 1
 #: CLI 用法错误（argparse 也用它）。
@@ -138,11 +140,22 @@ def cmd_gate(args: argparse.Namespace) -> int:
     extra: Sequence[str] = args.passthrough
     if args.select == "tia":
         try:
-            extra = _tia_extra(args, spec, data_path)
+            sel = _tia_select(args, spec, data_path)
         except Exception as exc:  # git / pytest 子进程的失败模式是开放的，统一折成用法错误
             print(f"[qaplat] tia 选择失败：{exc}", file=sys.stderr)
             store.close()
             return EXIT_USAGE
+        if not sel.full and not sel.node_ids:
+            # 仅文档变更（strategy="docs"）或「一条都没命中」：本层一条用例都不该跑。
+            # 这里返回 0 而不是「跑 0 条」——空收集会被 evaluate 判成 decisive==0 的未达标，
+            # 把「没什么要跑」误报成失败；也不能让空 extra 漏下去，那会让 pytest 跑整层。
+            print(
+                f"[qaplat] 本层没有受影响的用例（strategy={sel.strategy}）：跳过，不计入门禁",
+                flush=True,
+            )
+            store.close()
+            return EXIT_OK
+        extra = list(args.passthrough) if sel.full else [*sel.node_ids, *args.passthrough]
     run = gate.run_layer(spec, extra)
     record = _record_layer_run(store, spec, run, commit=commit)
     result = gate.evaluate(spec, record)
@@ -216,16 +229,8 @@ def _layer_collect_args(spec: LayerSpec) -> list[str]:
     return ["-m", spec.marker_expr] if spec.marker_expr else []
 
 
-def _tia_extra(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None) -> list[str]:
-    """``gate --select tia`` 的 ``extra``：选中 nodeid + 调用方附加参数。
-
-    ``data_path`` 非空就走行级（v2），为空退回文件级（v1）——两条路径共用同一个
-    ``Selection`` 契约，这里不需要分叉。
-    ``sel.full`` 为真时**只**返回原 ``passthrough``：全量兜底的含义是「影响面判定不了」，
-    这时再叠一层 nodeid 过滤等于把兜底又收窄回去。
-    """
-    from qaplat import tia
-
+def _tia_select(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None) -> tia.Selection:
+    """跑一次变更判定并打印摘要行，返回完整 ``Selection`` 供调用方分流。"""
     sel = tia.select_from_git(base=args.base, pytest_args=_layer_collect_args(spec), data_path=data_path)
     _warn_if_index_stale(data_path)
     print(
@@ -233,6 +238,21 @@ def _tia_extra(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None
         f"(ratio={sel.ratio:.2%}) full={sel.full} strategy={sel.strategy} reason={sel.reason}",
         flush=True,
     )
+    return sel
+
+
+def _tia_extra(args: argparse.Namespace, spec: LayerSpec, data_path: Path | None) -> list[str]:
+    """``gate --select tia`` 的 ``extra``：选中 nodeid + 调用方附加参数。
+
+    ``data_path`` 非空就走行级（v2），为空退回文件级（v1）——两条路径共用同一个
+    ``Selection`` 契约，这里不需要分叉。
+    ``sel.full`` 为真时**只**返回原 ``passthrough``：全量兜底的含义是「影响面判定不了」，
+    这时再叠一层 nodeid 过滤等于把兜底又收窄回去。
+
+    ⚠️ **空选中集不能走这里**：返回空 extra 等于不带任何 nodeid，pytest 会跑整层——
+    那正是「只改了一份 README 却跑满整层」的老问题。``cmd_gate`` 在调用前先分流。
+    """
+    sel = _tia_select(args, spec, data_path)
     if sel.full:
         return list(args.passthrough)
     return list(sel.node_ids) + list(args.passthrough)
