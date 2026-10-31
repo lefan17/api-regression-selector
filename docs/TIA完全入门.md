@@ -1314,7 +1314,7 @@ from qaplat import tia  # 函数内 import，见 6.8
 sel = tia.select_from_git(base=args.base, pytest_args=_layer_collect_args(spec), data_path=data_path)
 print(
     f"[qaplat] tia: selected={len(sel.node_ids)}/{sel.total_cases} "
-    f"(ratio={sel.ratio:.1%}) full={sel.full} strategy={sel.strategy} reason={sel.reason}",
+    f"(ratio={sel.ratio:.2%}) full={sel.full} strategy={sel.strategy} reason={sel.reason}",
     flush=True,
 )
 if sel.full:
