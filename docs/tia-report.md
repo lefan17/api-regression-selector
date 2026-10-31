@@ -19,14 +19,15 @@
 
 | 文件 | 行数 | 作用 |
 |---|---|---|
-| `qaplat/tia.py` | **858** | 选择器核心：v1 文件级 + v2 行级（coverage-context）+ 索引新鲜度 |
-| `qaplat/cli.py` | **+215/−1**（文件 683 行） | `tia select` / `tia capture` 子命令；`gate --select tia`（默认关闭） |
+| `qaplat/tia.py` | **956** | 选择器核心：v1 文件级 + v2 行级（coverage-context）+ 索引新鲜度 |
+| `qaplat/cli.py` | **+235/−2**（文件 703 行） | `tia select` / `tia capture` 子命令；`gate --select tia`（默认关闭） |
 | `qaplat/_dump.py` | **+11**（文件 168 行） | 采集插件加 `trylast=True`，修正分层分母与跨层选中 |
-| `testcases/platform/test_tia.py` | **855 行 / 61 条** | 覆盖 v1/v2 共 16 个分支 + 索引新鲜度 8 条，`qaplat/tia.py` 行覆盖 90% |
-| `.github/workflows/tia.yml` | **92** | 仅 `workflow_dispatch`：采集 → capture → 选择，不进 PR 门 |
-| `docs/tia-plan.md` | **213** | 契约基准：接口、CLI、验收数字、不做什么 |
-| `docs/TIA完全入门.md` | **2141** | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
-| `docs/tia-review.md` | **154** | 独立核验记录：两轮 5 条判据判决、问题处理表、核验方明确没验的部分 |
+| `testcases/platform/test_tia.py` | **1063 行 / 76 条** | 覆盖 v1/v2 共 16 个分支 + 索引新鲜度 8 条 + 被测服务必全量 6 条 + docs 分流 3 条 + 陈旧度文案 2 条 |
+| `.github/workflows/tia.yml` | **103** | 仅 `workflow_dispatch`：采集 → capture → 选择，不进 PR 门 |
+| `docs/tia-plan.md` | **221** | 契约基准：接口、CLI、验收数字、不做什么 |
+| `docs/TIA完全入门.md` | **2170** | 面向初学者的逐层讲解（数据从哪来、每行代码为什么这么写） |
+| `docs/tia-review.md` | **206** | 独立核验记录：三轮判决、问题处理表、核验方明确没验的部分 |
+| `docs/tia-report.md` | 本文 | 一页纸总账（行数随增删变化，不写死） |
 
 > 行数是 `wc -l` 实测值。改代码后请重测再回填——手写行数正是这份表上一轮 6 行全错的来源。
 
