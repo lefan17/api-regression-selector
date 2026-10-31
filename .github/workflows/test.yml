@@ -496,7 +496,7 @@ jobs:
 
       - name: 上传 qaplat 度量库（供 pages job 生成报表）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qaplat-db
           path: qaplat/.cache/qaplat.db
@@ -567,7 +567,7 @@ jobs:
       # 没有这一步它跑完就随 runner 一起没了。
       - name: 上传 flaky 治理账本
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flaky-governance
           path: reports/flaky-governance.json
@@ -602,7 +602,7 @@ jobs:
 
       - name: 上传测试报告（可在 Actions 页面下载）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: allure-report
           path: allure-report/
@@ -614,7 +614,7 @@ jobs:
       # 路径不存在，截图从来没被上传过。
       - name: 上传失败截图
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-screenshots
           path: testcases/ui/artifacts/
@@ -918,7 +918,7 @@ jobs:
       # 报告里最该看的两处：Aggregated 行与 knee 判定（summary.json）。
       - name: 上传压测结果
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-results
           path: reports/perf/

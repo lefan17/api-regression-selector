@@ -82,7 +82,7 @@ jobs:
 
       - name: 上传索引与标记
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tia-coverage
           # 下一次手动跑可以下载这份，跳过 3 分钟采集（前提是 HEAD 没变）。
