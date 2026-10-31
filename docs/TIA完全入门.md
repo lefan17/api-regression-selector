@@ -1614,7 +1614,7 @@ python -m qaplat.cli tia select --base HEAD
   - qaplat/registry.py
 命中测试文件: 1 个
   - testcases/platform/test_tia.py
-选中: 34 / 708 条用例（4.8%）
+选中: 34 / 712 条用例（4.78%）
 用例:（34 条，逐条省略）
 已知限制: 影响面按文件/行粒度判定；动态拼接路径提取不到会退化为全量；已删除用例匹配不到同样退化为全量
 ```
@@ -1623,18 +1623,18 @@ python -m qaplat.cli tia select --base HEAD
 
 ```json
 {"full": false, "strategy": "lines", "selected": 34, "effective_count": 34,
- "ratio": 0.048, "total_cases": 708, "changed_files": ["qaplat/registry.py"]}
+ "ratio": 0.0478, "total_cases": 712, "changed_files": ["qaplat/registry.py"]}
 ```
 
 **这个例子只选得动平台层，是有原因的**：`qaplat/registry.py` 和它的测试在同一个进程里跑，
 coverage-context 才认得准「哪条用例执行过哪一行」。同样改 `mock_server/routers.py` 一行，
-结果是**全量 708 条**——第 9.1 节第 0 条讲了为什么。
+结果是**全量 712 条**——第 9.1 节第 0 条讲了为什么。
 
 只跑被选中的那 34 条：
 
 ```bash
 python -m pytest testcases/platform/test_tia.py -q
-# 34 passed in 2.55s（vs 全量 139.64s）
+# 34 passed in 2.39s（vs 全量 137.41s）
 ```
 
 **2.21s vs 196.55s ≈ 89 倍**。它和上面那个 2.83s 不矛盾：两次是不同时间的独立运行，pytest 报的自身计时本身就有波动，而倍数的大头是「起一次 pytest + 起一次 `mock_server`」的固定开销——所以这个倍数只能当量级看，不能当常数用。
@@ -1940,7 +1940,7 @@ COVERAGE_FILE=.tia-coverage pytest -m "not ui" --cov=. --cov-context=test
 
 **第 3 条（本轮）：`strategy="docs"` 的空选中集会被当成「不过滤」漏下去。**
 
-- **现象**：`gate --select tia` 时 `node_ids` 为空，`_tia_extra` 拼出的 extra 里一个 nodeid 都没有 → pytest 收集整层。日志先打「selected=0/708 (0.00%) full=False strategy=docs」，然后照样把整层跑完。
+- **现象**：`gate --select tia` 时 `node_ids` 为空，`_tia_extra` 拼出的 extra 里一个 nodeid 都没有 → pytest 收集整层。日志先打「selected=0/712 (0.00%) full=False strategy=docs」，然后照样把整层跑完。
 - **修法**：`cmd_gate` 在调用前分流，空选中集直接判「本层没有受影响的用例：跳过」并返回 0（`qaplat/cli.py:153`）。返回「跑 0 条」不行——空收集会被 `evaluate` 判成 `decisive==0` 的未达标，把「没什么要跑」误报成失败。
 
 ### 9.3 v3 候选（都还没做）
