@@ -11,7 +11,7 @@
 # 9.0.3 → 9.1.1 都是 patch/minor，已知行为差异仅此一处（本机全量实测通过）。
 pytest==9.1.1
 pytest-html==4.2.0
-allure-pytest==2.13.5
+allure-pytest==2.16.2
 pytest-xdist==3.8.0
 # pytest-cov 卡在 6.x：7.0.0 起移除了 pytest_cov/embed.py 与 pytest_cov.pth，
 # 子进程覆盖率埋点（COV_CORE_* 通道）随之消失，
