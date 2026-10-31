@@ -5,7 +5,15 @@
 
 ## 一句话
 
-把「这次改动会影响哪些用例」算出来，只跑那一批。实测：**改 `mock_server/routers.py` 一行 → 选中 1 条用例（1/697，0.15%），跑完 2.21 秒**；而全量 `-m "not ui"` 是 **196.55 秒**。
+把「这次改动会影响哪些用例」算出来，只跑那一批。**但它只对同进程执行的代码成立**：
+
+- 改 `qaplat/registry.py:70`（平台层纯函数）→ 选中 **34 / 708 条（4.8%）**，跑完 **2.55 秒**；
+  全量 `-m "not ui"` 是 **139.64 秒** → 约 **55 倍**。
+- 改 `mock_server/` 任何文件 → **全量兜底**。原因见「已知限制」第 0 条：uvicorn 子进程的
+  coverage context 在 spawn 那一刻就固定了，行级数据会失真到「整份文件只关联 10 个用例」。
+
+早期版本写过「改 `mock_server/routers.py` 一行只跑 1 条、2.21 秒」——那个**测量本身是真的，
+但它测的是失真的索引**，不是精确判定。现已作废，别再引用。
 
 ## 交付物
 
@@ -50,19 +58,20 @@ pytest -m "not ui" -q --cov=. --cov-context=test --cov-report=
 > 自己都没进索引（121 / 1807 / 117，差 4 个）；补上 53 条平台自测后变成 122 / 1966 / 119，
 > 差 3 个。引用时把采集时间一起引，别把两个口径的数混着算。
 
-### 行级选择效果（四个真实场景）
+### 行级选择效果（真实可用 vs 必须全量）
 
 | 改动 | 选中 | 比例 | 说明 |
 |---|---|---|---|
-| `mock_server/routers.py:65`（`readyz` 里一次查询） | **1 条** | 0.15% | 实测跑完 **2.21s**（墙钟）/ 2.83s（pytest 内部计时） |
-| `mock_server/services.py` 某行 | 1 条 | 0.15% | 该文件 486 行被覆盖，最小影响面就是 1 条 |
-| `mock_server/quantity.py` / `idempotency.py` 某行 | 1 条 | 0.15% | 同上，59 / 82 行被覆盖 |
-| `qaplat/registry.py:70` | 11 条 | 1.7% | 平台层纯函数，被 11 个单测覆盖 |
+| `qaplat/registry.py:70` | **34 条** | 4.8% | 平台层同进程执行，行级数据真实可用；跑完 **2.55s** vs 全量 139.64s |
+| `apis/user_api.py` 某行 | 按索引 | — | HTTP 客户端同进程 import，可精确（`apis/` 不在必跑清单） |
+| `mock_server/routers.py:65` | **全量 708** | 100% | 子进程执行 → context 失真 → 必跑清单（**旧文档说的「1 条」是失真读数**） |
+| `mock_server/*` 任意行 | 全量 | 100% | 同上；该文件 444 行只关联 10 个用例，而实际有 423 条在打接口 |
+| `qaplat/gate.py` 模块级行 | 全量 | 100% | import 期执行，空 context，不归属任何用例 |
+| `README.md` / `docs/*.md` | **0 条** | 0% | `strategy=docs`：没有任何用例读它们 |
 
-**倍数只能当量级看，且必须连分母一起报**：2.21s（单条，墙钟）/ 196.55s（首采 602 条全量）≈ **89 倍**；
-按当前全量 139.17s 算则是 **≈ 63 倍**；若用 pytest 内部计时 2.83s 对 196.55s 则是 **≈ 69 倍**。
-三个数都真实，差别全在「分子分母取自哪次运行」。单条 2.21s 里约 2 秒是 pytest 固定启动开销
-（起 `mock_server`、加载插件、收集），用例越少固定开销占比越高，倍数不是线性可推的——**对外只写「量级为数十倍」，别写死某一个数**。
+**倍数必须连分母一起报**：2.55s（34 条，pytest 内部计时）对 139.64s（708 条全量）≈ **55 倍**；
+按墙钟 5s 对 142s ≈ 28 倍。单条/少量用例里约 2 秒是 pytest 固定启动开销（起 `mock_server`、
+加载插件、收集），条数越少固定开销占比越高，倍数不是线性可推的——**对外只写「量级为数十倍」**。
 
 ### 漏检实验（这是"可不可信"的唯一硬证据）
 
@@ -164,6 +173,7 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 |---|---|---|
 | 改了 `pyproject.toml` / `conftest.py` / `pytest.ini` | `ALWAYS_FULL_NAMES` | 影响所有用例的收集与执行 |
 | 改了 `qaplat/gate.py` / `data/*.json` | `ALWAYS_FULL_PREFIXES` | 门禁本体与共享数据 |
+| 改了 `mock_server/` / `login_app/` / `mes_web/` / `ui/` | `ALWAYS_FULL_PREFIXES` | 子进程执行，行级 context 失真（见「已知限制」第 0 条） |
 | 改了某个「没有任何用例执行过」的行 | 行级索引查不到 | 影响面未知，宁可全跑 |
 | 改了模块级代码（import 期执行，空 context） | 该行 context 为空 | 不归属任何用例 |
 | 变更文件不在覆盖索引里 | 索引里没有 | 可能是新文件或采集漏了 |
@@ -171,6 +181,25 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 | **`git diff` 为空** | 本次没有任何变更 | 避免「静默跳过全部门禁」 |
 
 ## 已知限制（必须知道）
+
+0. **⚠️ 被测服务代码（`mock_server/`、`login_app/`、`mes_web/`、`ui/`）不在行级判定的适用范围。**
+   `--cov-context=test` 的 context 在**子进程 spawn 的那一刻**就由 `COV_CORE_CONTEXT` 固定了：
+   uvicorn 进程里执行的所有行，全部算到「启动它的那条用例」头上。实测 `mock_server/routers.py`
+   的 444 行只关联 **10 个用例**，而实际有 423 条用例在打接口——若让行级策略判这个文件，
+   会**不报错地**漏掉约 92% 的用例。所以这几个目录留在 `ALWAYS_FULL_PREFIXES` 里，改它们一律全量。
+   同理「模块级行 → 全量」那道安全网在这里也失效（`app.py` 63 行每行都有非空 context）。
+
+   真正能精确判定的是**同进程执行**的代码：
+
+   | 目录 | 执行方式 | 行级判定 |
+   |---|---|---|
+   | `qaplat/**` 平台层 | 测试直接 import | ✅ 精确 |
+   | `apis/**` HTTP 客户端 | 测试直接 import | ✅ 精确 |
+   | `mock_server/**`、`login_app/**`、`mes_web/**` | 测试起 uvicorn 子进程 | ❌ 失真 → 全量 |
+   | `ui/**` | playwright 浏览器 | ❌ 无覆盖 → 全量 |
+
+   副作用要说明白：**「改一行路由只跑 1 条」这个卖点不成立**；能成立的是「改一行 `qaplat`
+   平台代码只跑几十条」。把前者写进简历，面试官只要问一句「那改路由参数呢」就会拆穿。
 
 1. **行级粒度的固有取舍**：同一文件里部分行命中时按命中行选，不因「另有几行没人执行」而升全量。收紧要加显式开关（v3）。
 2. **路径字面量方案对 `mock_server/**` 失效**：路由写 `@router.get("/readyz")`，完整前缀在 `mock_server/app.py:50` 的 `include_router(prefix=API_PREFIX)` 里拼。实测 `registry.read_referenced_paths("mock_server/routers.py")` 返回 **0 条**，所以 v1 对被测源码必然退化全量——这正是 v2 改用 coverage-context 的原因。
@@ -193,7 +222,7 @@ COVERAGE_FILE=.tia-coverage "$VENV" -m pytest -m "not ui" \
 
 | 项 | 结果 |
 |---|---|
-| `testcases/platform/test_tia.py` | **61 passed**（含索引新鲜度 8 条） |
+| `testcases/platform/test_tia.py` | **72 passed**（含索引新鲜度 8 条、被测服务必全量 6 条、docs 跳过整层 1 条） |
 | `-m platform` | 3 failed（基线）, 294 passed, 400 deselected |
 | `qaplat/tia.py` 行覆盖 | 90%（267 stmts / 27 miss；未覆盖的主要是 `_run_git` 的真 git 调用、CLI 接线，以及 `select` / `select_by_lines` 里「未命中任何用例 → 全量」的两条算法兜底分支，`qaplat/tia.py:554` 与 `:671`） |
 | `ruff check` / `format --check` | 通过（163 files formatted） |
