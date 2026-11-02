@@ -52,9 +52,9 @@ pytest-playwright==0.10.0
 # 报 ImportError: No module named 'fastapi'——分成两个文件省下的那点安装时间，
 # 远抵不过"新同事照 README 做完却跑不起来"的代价。
 # 版本精确 pin：范围式 spec 曾把 starlette 解析到 0.13.1 这种远古版本。
-fastapi==0.143.2
+fastapi==0.162.0
 uvicorn==0.54.0
-pydantic==2.14.1
+pydantic==2.14.2
 
 # === 契约驱动测试（testcases/contract/，见 docs/wave1-contract-handoff.md） ===
 # schemathesis 从 docs/openapi.json 生成请求做属性测试，所以它和 pytest / jsonschema
