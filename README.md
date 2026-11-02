@@ -692,16 +692,20 @@ UI 与接口操作不到同一份数据、闭环是断的，所以这条打的�
 
 ### 提交历史里的 `dispatcher` / `integ` / `agent` 是什么
 
-点开提交历史会看到 195 条提交里有 116 条的作者不是 `Lefan Ma`：
+点开提交历史会看到 **219 条提交里，100 条的作者是 AI 编码代理会话**（其余是人工 111 条
+＋ dependabot 8 条；口径写死在这里——它是本仓自己的历史，不是上游那份）：
 
 | 作者 | 邮箱 | 条数 | 是什么 |
 |---|---|---|---|
-| `Lefan Ma` | `128964809+lefan17@users.noreply.github.com` | 79 | GitHub 账号，人工 review 与亲自改的那部分 |
+| `Lefan Ma` | `128964809+lefan17@users.noreply.github.com` | 84 | GitHub 账号，人工 review 与亲自改的那部分 |
+| `lefan` | `lefan@local` | 19 | 同一个人的第三个 git 身份：fork 之后 TIA 那 19 条全在这里（本机未配 user 时提交） |
 | `dispatcher` | `dispatcher@local` | 76 | 本机未配置 git user 时，AI 编码代理会话提交的 |
 | `integ` | `i@x` | 17 | 集成／收口会话（跨仓库搬运、数字核对、口径统一） |
 | `dependabot[bot]` | — | 8 | 依赖升级 |
 | `lefan17` | `lefan17@users.noreply.github.com` | 8 | 同一个人的另一个 git 身份（仓库搬家后统一成 `Lefan Ma`） |
 | `agent` | `agent@local` | 7 | 早期 Agent 会话（波 1 的认证改造与 schemathesis 契约套件） |
+
+复现：`git log --format='%an|%ae' | sort | uniq -c | sort -rn`。
 
 **它们不是外部贡献者，是这个仓库的开发过程本身。** 逐条核对过：`dispatcher` 那 76 条是
 `fix(qaplat):` / `ci:` / `test:` 一类的小步修复，`integ` 那 17 条是 `docs:` 的数字重算与口径统一，
