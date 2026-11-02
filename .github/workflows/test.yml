@@ -830,7 +830,7 @@ jobs:
 
       # 缓存 pre-commit 拉下来的 hook 环境。命中后这一步从 ~40 秒降到几秒。
       - name: 缓存 pre-commit 环境
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
