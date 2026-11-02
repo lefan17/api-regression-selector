@@ -159,6 +159,19 @@ jobs:
     # 又不会让一个真卡死的 job 占满默认的 360 分钟额度。
     timeout-minutes: 45
 
+    # 仓库默认的 workflow 权限是只读（Settings → Actions → Workflow permissions
+    # = Read repository contents and packages permissions），实测 token 只有
+    # `Contents: read / Metadata: read / Packages: read`。末尾那一步
+    # 「失败时自动开 issue」要 `gh label create` + `gh issue create`，没有
+    # `issues: write` 会在 create 时才报错——而且报的是 `could not add label:
+    # 'ci-failure' not found`，看起来像「标签不存在」，实际是没权限建标签。
+    # 本仓 run 41414746788 就是这样：真正失败的只有覆盖率那一步，这条通知
+    # 步骤把自己也弄红了（`##[error]Process completed with exit code 1`）。
+    # 最小授权：只加 issues: write，其余保持只读。
+    permissions:
+      contents: read
+      issues: write
+
     # 角色口令与 UI 口令从 GitHub Secrets 注入。用例侧（apis/mes_api.py、
     # data/config.yaml 的 ${UI_PASSWORD}）与 Mock 后端的**种子口令**取的都是
     # common/secrets.py 这一个来源，所以只要在这里注入，两边同时生效——
