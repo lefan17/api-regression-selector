@@ -43,7 +43,7 @@ jsonschema==4.26.0
 httpx==0.28.1
 
 # === UI 测试 ===
-playwright==1.64.0
+playwright==1.64.1
 pytest-playwright==0.10.0
 
 # === Mock 后端（testcases/mes/ 的业务全链路用例需要，见 mock_server/） ===
