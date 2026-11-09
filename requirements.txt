@@ -9,7 +9,7 @@
 # （testcases/platform/test_metrics_store.py:140 的 approx(timedelta(0))），
 # 已改成 approx(timedelta(0), abs=timedelta(0))，所以 9.1.1 可以升。
 # 9.0.3 → 9.1.1 都是 patch/minor，已知行为差异仅此一处（本机全量实测通过）。
-pytest==9.1.1
+pytest==9.2.0
 pytest-html==4.2.0
 allure-pytest==2.13.5
 pytest-xdist==3.8.0
