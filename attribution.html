@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>失败归因</title><style>
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px 32px;
+       line-height: 1.5; background: #fbfbfd; color: #1d1d1f; }
+@media (prefers-color-scheme: dark) { body { background: #1c1c1e; color: #f2f2f7; } }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 28px 0 8px; }
+.sub { opacity: .65; font-size: 13px; margin-bottom: 20px; }
+nav a { margin-right: 14px; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 8px; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid rgba(128,128,128,.28); vertical-align: top; }
+th { font-weight: 600; background: rgba(128,128,128,.10); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.ok { color: #1a7f37; } .bad { color: #c0392b; } .warn { color: #b8860b; } .dim { opacity: .6; }
+.card { display: inline-block; padding: 10px 18px; margin: 0 10px 10px 0; border: 1px solid rgba(128,128,128,.30);
+        border-radius: 8px; min-width: 120px; }
+.card .k { font-size: 12px; opacity: .65; } .card .v { font-size: 20px; font-weight: 600; }
+.empty { opacity: .55; font-style: italic; }
+</style></head><body>
+<h1>失败归因</h1>
+<p class='sub'>生成时间：2026-11-10 01:11:48 UTC</p>
+<nav><a href="index.html">总览</a><a href="runs.html">轮次</a><a href="coverage.html">覆盖</a><a href="attribution.html">失败归因</a><a href="drift.html">契约漂移</a></nav>
+<h2>最近 10 轮合计</h2><table><thead><tr><th>归因</th><th>条数</th></tr></thead><tbody><tr><td>环境/基础设施</td><td class='num'>0</td></tr><tr><td>测试数据</td><td class='num'>0</td></tr><tr><td>被测缺陷（已知）</td><td class='num'>0</td></tr><tr><td>真实回归</td><td class='num'>0</td></tr><tr><td>未知</td><td class='num'>0</td></tr></tbody></table><p class='sub'>归因规则是可枚举的文本证据匹配，见 <span class='mono'>qaplat/classify.py</span>；证据不足时归为「未知」而不是猜成回归。</p><h2>pr-20261110T011050-7a6a7a74 <span class='sub'>（pr，无失败）</span></h2><p>无失败</p><p class='empty'>（无数据）</p>
+</body></html>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>轮次明细</title><style>
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px 32px;
+       line-height: 1.5; background: #fbfbfd; color: #1d1d1f; }
+@media (prefers-color-scheme: dark) { body { background: #1c1c1e; color: #f2f2f7; } }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 28px 0 8px; }
+.sub { opacity: .65; font-size: 13px; margin-bottom: 20px; }
+nav a { margin-right: 14px; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 8px; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid rgba(128,128,128,.28); vertical-align: top; }
+th { font-weight: 600; background: rgba(128,128,128,.10); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.ok { color: #1a7f37; } .bad { color: #c0392b; } .warn { color: #b8860b; } .dim { opacity: .6; }
+.card { display: inline-block; padding: 10px 18px; margin: 0 10px 10px 0; border: 1px solid rgba(128,128,128,.30);
+        border-radius: 8px; min-width: 120px; }
+.card .k { font-size: 12px; opacity: .65; } .card .v { font-size: 20px; font-weight: 600; }
+.empty { opacity: .55; font-style: italic; }
+</style></head><body>
+<h1>轮次明细</h1>
+<p class='sub'>生成时间：2026-11-10 01:11:48 UTC</p>
+<nav><a href="index.html">总览</a><a href="runs.html">轮次</a><a href="coverage.html">覆盖</a><a href="attribution.html">失败归因</a><a href="drift.html">契约漂移</a></nav>
+<table><thead><tr><th>run_id</th><th>层</th><th>commit</th><th>开始</th><th>总</th><th>通过</th><th>失败</th><th>错误</th><th>跳过</th><th>xfail</th><th>通过率</th><th>耗时(s)</th><th>结论</th></tr></thead><tbody><tr><td><span class='mono'>pr-20261110T011050-7a6a7a74</span></td><td>pr</td><td><span class='mono'>2002c46</span></td><td>2026-11-10 01:10:50</td><td class='num'>450</td><td class='num'>449</td><td class='num'>0</td><td class='num'>0</td><td class='num'>1</td><td class='num'>0</td><td><span class='ok'>100.0%</span></td><td class='num'>43.7</td><td>passed</td></tr></tbody></table>
+</body></html>
